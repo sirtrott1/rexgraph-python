@@ -35,8 +35,8 @@ from cython.parallel cimport prange
 from libc.math cimport fabs
 from libc.stdint cimport int32_t, int64_t, uint64_t
 
-# DO NOT cimport from rexgraph.core._common: it's THIS module!
-# The .pxd file declarations are automatically available.
+# The matching .pxd declarations are already available inside this module;
+# importing them again through the module name would create a self import.
 
 np.import_array()
 
@@ -47,7 +47,7 @@ np.import_array()
 #
 
 cdef int64_t _max_parallel_buffer_bytes = -1      # per operation parallel scratch
-cdef int64_t _max_total_allocation_bytes = -1     # global allocation ceiling
+cdef int64_t _max_total_allocation_bytes = -1     # configured allocation bound, without a live total
 cdef int64_t _max_dense_allocation_bytes = -1     # single dense matrix ceiling
 cdef double _parallel_buffer_fraction = 0.25
 cdef double _total_allocation_fraction = 0.75
@@ -76,12 +76,11 @@ cdef Py_ssize_t _eigen_dense_limit = 2000
 cdef Py_ssize_t _default_k = 20
 cdef double _fill_ratio_dense_threshold = 0.3
 
-# The exact rational path is PRIMARY: where a field can be read over Q, the answer is
-# the one it gives and the float path is that answer's oracle. It is not unconditional.
-# Rational elimination is cubic in the grade dimension and its coefficients grow, so
-# above this many cells the exact solve is not attempted and the float tower produces
-# instead: an approximation, and reported as one. Raise it to buy exactness at a
-# cost the caller has chosen; there is no size at which the exact answer becomes wrong.
+# Rational field preparation is bounded by dimension because elimination can
+# create fill and large coefficients. Callers choose their arithmetic policy:
+# an exact request must be admitted or refused, while a numerical compatibility
+# interface can explicitly select its own approximation path. Raising this limit
+# admits more work; it does not change which answers are mathematically exact.
 cdef Py_ssize_t _exact_field_limit = 512
 
 #
@@ -229,14 +228,17 @@ def configure_memory(
     total_allocation_fraction: float = None,
     dense_allocation_fraction: float = None,
 ):
-    """Configure memory limits for the core Cython layer.
+    """Configure the bounds used by core allocation and dispatch checks.
+
+    These settings do not account for all live arrays, external workspaces or
+    process memory. Several individually admitted allocations can coexist.
 
     Parameters
 
     max_parallel_buffer : int, optional
-        Maximum bytes for per-operation parallel scratch buffers.
+        Maximum bytes admitted for a parallel operation's scratch buffers.
     max_total_allocation : int, optional
-        Global allocation ceiling in bytes.
+        Configured allocation bound in bytes; no aggregate allocator counter.
     max_dense_allocation : int, optional
         Maximum bytes for a single dense matrix.  Controls whether
         Laplacian construction uses dense spmm kernels or sparse scipy.
@@ -361,17 +363,16 @@ def configure_algorithms(
     Parameters
 
     eigen_dense_limit : int, optional
-        Maximum matrix dimension for dense eigh (LAPACK dsyevd).
-        Above this, sparse eigsh (ARPACK) is used.
-        Default: 2000.
+        Dimension limit used when selecting dense numerical spectra (default
+        2000). The requesting operator determines its larger-system method.
     default_k : int, optional
         Number of eigenvalues to compute in sparse mode (default 20).
     fill_ratio_dense_threshold : float, optional
         L0 fill ratio above which dense matmul is preferred (default 0.3).
     exact_field_limit : int, optional
-        Largest grade dimension at which the exact rational field path is taken
-        (default 512). Above it the float tower produces and says so. Set 0 to
-        refuse the exact path outright.
+        Largest relation count for automatic rational field evaluation (default
+        512). Zero disables that automatic path. Explicit exact requests keep
+        their own admission policy and refuse an unsupported calculation.
     """
     global _eigen_dense_limit, _default_k, _fill_ratio_dense_threshold
     global _exact_field_limit

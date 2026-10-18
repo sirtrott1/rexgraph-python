@@ -80,7 +80,7 @@ def test_new_modules_can_be_imported_independently(tmp_path, imports):
         "assert set(_REGISTRY) == catalogued() | {'REX'}"
     )
     from runpy import run_path
-    run_isolated = run_path(str(pathlib.Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+    run_isolated = run_path(str(pathlib.Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
     result = run_isolated(code, packages=("rcql", "rexgraph"), cwd=tmp_path,
                           capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr

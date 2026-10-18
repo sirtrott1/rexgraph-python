@@ -23,4 +23,4 @@ else
     fi
 fi
 cd "$REPO"
-INENV -I "$REPO/scripts/test_installed.py" --allow-editable --package rexgraph -- "$REPO/rexgraph/tests" "$@"
+INENV -I "$REPO/rexgraph/tests/_support/test_installed.py" --allow-editable --package rexgraph -- "$REPO/rexgraph/tests" "$@"

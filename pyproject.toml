@@ -16,7 +16,7 @@ build-backend = "mesonpy"
 
 [project]
 name = "rexgraph"
-version = "1.3.1"
+version = "1.3.2"
 description = "Relational complex (rex) graph analysis: edge-centric topological data analysis with Hodge decomposition"
 readme = "README.md"
 # SPDX, per PEP 639: "Apache License 2.0" is the name, not the identifier,
@@ -68,10 +68,7 @@ oracles = ["scipy>=1.13"]
 
 # I/O: Zarr, HDF5, Arrow, Parquet, SQL
 io = [
-    # safetensors is an IO FORMAT and belongs here: rexgraph/io/safetensors_bridge.py
-    # plus six other core modules import it, and no extra declared it, so
-    # `pip install rexgraph[io]` gave you every format except that one. The same shape
-    # as the undeclared fsspec on the agent side.
+    # Native tensor and model transport use this format independently of torch.
     "safetensors>=0.3",
     # Optional compression backend for framed store blobs. The standard
     # library zlib backend remains available when zstandard is absent.
@@ -106,12 +103,9 @@ cuda = [
 
 vulkan = ["vulkan>=1.3.275.1", "scipy>=1.13"]
 
-# TensorFlow, for `rexgraph.nn.tf_relational`. Separate from `nn` on purpose:
-# tensorflow and a ROCm/CUDA torch CANNOT share an interpreter here. Importing
-# torch then tensorflow aborts outright (both bundle LLVM; the second to register
-# its CommandLine options calls LLVM ERROR), and even tf first a later ROCm GPU
-# dispatch segfaults. Install both only if the two are kept in separate processes,
-# which is what rexgraph/tests/test_tf_integration.py does.
+# TensorFlow support is separate from nn so its runtime can be selected
+# independently. Builds that bundle conflicting LLVM or GPU runtimes must run
+# in separate processes; test_tf_integration.py uses that isolation.
 tf = [
     "tensorflow>=2.16",
 ]
@@ -128,8 +122,7 @@ dev = [
     "meson-python>=0.18",
     "ruff>=0.3",
     "mypy>=1.0",
-    # so the classifier check runs instead of skipping: PyPI rejects an upload
-    # over one unknown string, which is a slow way to find a typo
+    # Validate metadata classifiers locally before attempting distribution.
     "trove-classifiers>=2024.1.1",
 ]
 
@@ -142,8 +135,7 @@ all = [
 # URLs
 [project.urls]
 Homepage = "https://github.com/sirtrott1/rexgraph"
-# the published branch has no docs/ directory; README is the documentation entry
-# point, and a 404 in package metadata is worse than pointing at what exists.
+# The root README is the documentation entry point for source installations.
 Documentation = "https://github.com/sirtrott1/rexgraph#readme"
 Repository = "https://github.com/sirtrott1/rexgraph"
 Issues = "https://github.com/sirtrott1/rexgraph/issues"
@@ -155,12 +147,8 @@ Issues = "https://github.com/sirtrott1/rexgraph/issues"
 [tool.pytest.ini_options]
 testpaths = ["rexgraph/tests"]
 addopts = ["-v", "--tb=short"]
-# One entry, and it names exactly one third party message. torch/utils/mkldnn.py defines
-# MkldnnLinear and friends as torch.jit.ScriptModule with @torch.jit.script_method, which
-# torch itself has deprecated; the module is imported lazily when we move a tensor to a
-# device, so the 14 warnings are 14 of torch's own decorations and no call of ours can
-# avoid them. Narrow on purpose: a blanket DeprecationWarning ignore would also hide the
-# duckdb, scipy and datetime deprecations that were real and got fixed.
+# PyTorch emits this deprecation from its own lazy mkldnn import. Match that
+# message only so deprecations in our calls and other dependencies remain visible.
 filterwarnings = [
     "ignore:`torch.jit.script_method` is deprecated:DeprecationWarning",
 ]
@@ -197,36 +185,23 @@ warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 
-# Prebuilt wheels
-#
-# The package is not on PyPI, so today every install compiles 42 Cython extensions from
-# source and therefore needs a C compiler, meson and cython on the user's machine. That
-# is the real cross setup barrier: not that the build is fragile, but that a build is
-# required at all. A wheel removes it, and `pip install rexgraph` becomes a download.
+# Wheel builds supply compiled extensions for these interpreter versions.
+# A matching wheel avoids a local Cython build; source installs need the toolchain.
 [tool.cibuildwheel]
 build = ["cp310-*", "cp311-*", "cp312-*", "cp313-*"]
 
-# These kernels target the CPython C API. PyPy is not in this wheel matrix.
-# musllinux is left off the first pass because it doubles Linux build time for the
-# Alpine case; the line to add it is this one, once the glibc wheels are known good.
-# win32 is outside the supported NumPy and native kernel build matrix. 32 bit Linux is
-# skipped too: its manylinux2014 i686 image offers no OpenBLAS package to link.
+# The kernels target the CPython C API. This matrix covers glibc Linux, macOS
+# and 64 bit Windows; musl and 32 bit builds need separate dependency qualification.
+# The manylinux2014 i686 image lacks the OpenBLAS package used by this build.
 skip = ["pp*", "*-musllinux_*", "*-win32", "*-manylinux_i686"]
 
-# rexgraph.tests is deliberately not shipped in the wheel, so there is no suite inside
-# it to run and this stands in for one. cibuildwheel runs it from a temporary directory,
-# which also verifies that the wheel imports when the source tree is not in front of it.
-#
-# It reaches the CHARACTER on purpose, not just betti. The first version stopped at
-# betti and passed on four wheels whose _laplacians could not import at all: betti never
-# touches it, so the check was green and the wheel was broken. A smoke test has to cross
-# every compiled module the package needs, and importing them one by one is how it says
-# WHICH one is missing instead of only that something is.
-test-command = "python {project}/scripts/smoke_test.py"
+# Run outside the checkout so source files cannot hide missing wheel members.
+# The smoke test imports selected kernels individually and exercises character
+# and exact operators; a Betti check alone would not reach BLAS linked modules.
+test-command = "python {project}/agent/install/smoke_test.py"
 
 [tool.cibuildwheel.linux]
-# manylinux_2_28 rather than the older default: the kernels are built with -flto and
-# c11, and the 2_28 image ships a compiler new enough not to fight either.
+# This image supplies the compiler used for C11 and link time optimization.
 manylinux-x86_64-image = "manylinux_2_28"
 
 # Supply BLAS/LAPACK for the cblas and LAPACK calls declared in _linalg.pxd.
@@ -234,15 +209,12 @@ manylinux-x86_64-image = "manylinux_2_28"
 before-all = "yum install -y openblas-devel || { apt-get update && apt-get install -y libopenblas-dev; }"
 
 [tool.cibuildwheel.macos]
-# 10.13 is what the C11 + LTO combination needs, and it is below anything still
-# receiving updates, so it costs no reach.
+# Retain the deployment target used by the C11 and LTO wheel configuration.
 environment = { MACOSX_DEPLOYMENT_TARGET = "10.13" }
 
-# The BLAS is Accelerate, part of macOS itself. It exports the unprefixed cblas_* and
-# LAPACK symbols the kernels declare, so delocate has nothing to bundle. Homebrew's
-# OpenBLAS, libgfortran, libquadmath and libomp are built for the runner's own release,
-# 15.0, and delocate refused to bundle them into wheels that target 11.0 and 10.13;
-# OpenMP is disabled for the same reason.
+# Accelerate supplies the declared CBLAS/LAPACK symbols as a system framework.
+# Avoid bundling Homebrew libraries built for a newer macOS than the wheel target;
+# OpenMP is disabled here because its runtime has the same deployment constraint.
 config-settings = "setup-args=-Dblas_provider=accelerate setup-args=-Dopenmp=disabled"
 
 [tool.cibuildwheel.windows]

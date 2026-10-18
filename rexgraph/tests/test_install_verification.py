@@ -23,7 +23,7 @@ def test_child_import():
         check=True, capture_output=True, text=True, timeout=30)
 ''')
     report = tmp_path / "report.xml"
-    command = [sys.executable, "-I", str(ROOT / "scripts/test_installed.py"),
+    command = [sys.executable, "-I", str(ROOT / "rexgraph/tests/_support/test_installed.py"),
                "--allow-editable", "--package", "rexgraph", "--",
                os.path.relpath(probe, ROOT), "-q", "--junitxml=" + os.path.relpath(report, ROOT)]
     result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, timeout=60,
@@ -37,9 +37,9 @@ def test_wheel_conftest_does_not_import_a_missing_sibling_from_source(tmp_path):
     tests = checkout / "rexgraph" / "tests"
     tests.mkdir(parents=True)
     (tests / "__init__.py").touch()
-    (checkout / "scripts").mkdir()
+    (checkout / "rexgraph/tests/_support").mkdir(parents=True)
     shutil.copy2(ROOT / "conftest.py", checkout / "conftest.py")
-    shutil.copy2(ROOT / "scripts/_rexgraph_test_state.py", checkout / "scripts/_rexgraph_test_state.py")
+    shutil.copy2(ROOT / "rexgraph/tests/_support/_rexgraph_test_state.py", checkout / "rexgraph/tests/_support/_rexgraph_test_state.py")
     sibling = checkout / "rcql" / "rcql"
     sibling.mkdir(parents=True)
     marker = tmp_path / "source-was-imported"
@@ -48,7 +48,7 @@ def test_wheel_conftest_does_not_import_a_missing_sibling_from_source(tmp_path):
     probe = tests / "test_missing_sibling.py"
     probe.write_text("from pathlib import Path\ndef test_source_is_not_loaded():\n    assert not Path(" +
                      repr(str(marker)) + ").exists()\n")
-    result = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/test_installed.py"),
+    result = subprocess.run([sys.executable, "-I", str(ROOT / "rexgraph/tests/_support/test_installed.py"),
                              "--allow-editable", "--package", "rexgraph", "--", str(probe), "-q"],
                             cwd=checkout, text=True, capture_output=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -74,7 +74,7 @@ for path in (CONFIG_FILE, cache_root(), sessions_root(), huggingface_cache_root(
 assert Path(tempfile.gettempdir()).is_relative_to(root)
 '''
     pytest.importorskip("agent.cli.config", reason="Agent is required to check import time configuration")
-    result = subprocess.run([sys.executable, "-I", "-c", code, str(ROOT / "scripts")],
+    result = subprocess.run([sys.executable, "-I", "-c", code, str(ROOT / "rexgraph/tests/_support")],
                             cwd=tmp_path, env=dict(os.environ, **settings), text=True,
                             capture_output=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -87,8 +87,8 @@ def installation(tmp_path):
     checkout.mkdir()
     shutil.copy2(ROOT / "install.sh", checkout / "install.sh")
     shutil.copy2(ROOT / "Makefile", checkout / "Makefile")
-    (checkout / "scripts").mkdir()
-    shutil.copy2(ROOT / "scripts/setup_gpu.py", checkout / "scripts/setup_gpu.py")
+    (checkout / "agent/install").mkdir(parents=True)
+    shutil.copy2(ROOT / "agent/install/setup_gpu.py", checkout / "agent/install/setup_gpu.py")
     binaries = tmp_path / "bin"
     binaries.mkdir()
     log = tmp_path / "commands.jsonl"
@@ -248,8 +248,8 @@ def test_amd_ocr_install_requires_a_platform_wheel_before_pip(installation):
 def test_clean_preserves_environments_builds_metadata_and_symbolic_links(tmp_path):
     checkout = tmp_path / "checkout with spaces"
     checkout.mkdir()
-    (checkout / "scripts").mkdir()
-    shutil.copy2(ROOT / "scripts" / "clean_cache.py", checkout / "scripts" / "clean_cache.py")
+    (checkout / "agent/install").mkdir(parents=True)
+    shutil.copy2(ROOT / "agent/install/clean_cache.py", checkout / "agent/install/clean_cache.py")
     shutil.copy2(ROOT / "Makefile", checkout / "Makefile")
     package = checkout / "package"
     (package / "__pycache__").mkdir(parents=True)
@@ -279,7 +279,7 @@ def test_clean_preserves_environments_builds_metadata_and_symbolic_links(tmp_pat
 
 def test_clean_discovers_local_virtual_environments(tmp_path):
     import importlib.util
-    spec = importlib.util.spec_from_file_location("clean_cache", ROOT / "scripts" / "clean_cache.py")
+    spec = importlib.util.spec_from_file_location("clean_cache", ROOT / "agent/install/clean_cache.py")
     cleaner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cleaner)
     for name, marker in (("python env", "pyvenv.cfg"), ("conda env", "conda-meta")):

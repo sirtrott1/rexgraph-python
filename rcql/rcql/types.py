@@ -203,8 +203,9 @@ class GradedOperatorDescriptor:
 class Exactness(str, Enum):
     """The contract a value's arithmetic was produced under.
 
-    These names are unchanged. INTEGER and RATIONAL assert a certified construction, not
+    INTEGER and RATIONAL assert a certified construction, not
     that a float happens to hold a whole number. ROUNDED names a specified rounding rule.
+    ALGEBRAIC retains exact coefficients in a declared algebraic field basis.
     APPROXIMATE is a floating action or numerical solve and carries method and residual
     where applicable. ANALYTIC is an unevaluated exact formula. STRUCTURAL is a certified
     symbolic fact or descriptor, and is not a precision claim about a scalar.
@@ -212,6 +213,7 @@ class Exactness(str, Enum):
 
     INTEGER = "integer"
     RATIONAL = "rational"
+    ALGEBRAIC = "algebraic"
     ROUNDED = "rounded"
     APPROXIMATE = "approximate"
     ANALYTIC = "analytic"
@@ -241,6 +243,7 @@ class Domain(str, Enum):
 
     INTEGER = "integer"
     RATIONAL = "rational"
+    ALGEBRAIC = "algebraic"
     REAL = "real"
     COMPLEX = "complex"
     SYMBOLIC = "symbolic"

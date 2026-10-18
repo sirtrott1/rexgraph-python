@@ -12,12 +12,11 @@ __all__ = ["query_provenance", "store_provenance", "index_leverage", "format_pro
 
 
 def index_leverage(index):
-    """The leverage over a stored index, computed once and cached against its digest.
+    """Return the stored corpus complex and its cached relation leverage.
 
-    The index is the complex, so this is a property OF THE STORE and not of a query. It
-    is invalidated by a write, which is what the digest tracks, so a read heavy corpus
-    pays the solve once and every subsequent query is a lookup.
-    """
+    The cache is keyed by ``state_digest`` because leverage depends on the corpus
+    state shared by queries. A matching digest reuses the solve; a changed digest
+    reconstructs the complex and recomputes the readings."""
     from agent import rcdb_index as ix
 
     digest = index.get("state_digest")
@@ -32,19 +31,17 @@ def index_leverage(index):
 
 
 def store_provenance(index, doc_ids, *, response=None, coupling=False, field=None):
-    """Provenance for a retrieval, resolving record ids through the stored index.
+    """Read provenance on the corpus relations owned by the selected records.
 
-    The retrieval returns records; the readings are over RELATIONS. A record owns a run
-    of them (`relations_of`), so the section is the union of those runs, which is why the
-    answer's support is a section of the corpus complex rather than a list of documents.
-    """
+    Each record can own several relations. Their union forms the supporting
+    section used for the readings, while record IDs remain available as labels
+    and missing IDs are reported separately."""
     from agent import rcdb_index as ix
 
     rex, lev = index_leverage(index)
     want = [str(d) for d in doc_ids]
-    # rows_for is the index's own lookup: one hash over the id table rather than a scan
-    # of every row per query. Hand rolling the scan made a retrieval O(records) in
-    # Python on a structure that answers it directly.
+    # The index lookup reuses its ID table across queries; scanning rows here would
+    # make each retrieval proportional to the whole corpus.
     rows = [int(r) for r in ix.rows_for(index, ids=want)]
     owner = ix.rel_owner(index)
     rels = [e for r in rows for e in ix.relations_of(index, r)]
@@ -59,20 +56,17 @@ def store_provenance(index, doc_ids, *, response=None, coupling=False, field=Non
 
 def query_provenance(rex, retrieved, *, response=None, leverage=None, labels=None,
                      coupling=False, field=None, corpus_rank=None):
-    """The exact structural provenance of one answer.
+    """Measure the corpus relations supporting one answer.
 
-    `retrieved` is the relation indices the answer rests on. `response` is an optional
-    1 cochain over the relations (the field the answer was read from), which adds the
-    Hodge split; without it the structural readings are still returned.
+    ``retrieved`` contains relation indices. An optional relation cochain in
+    ``response`` adds a Hodge decomposition; structural readings are returned
+    without it. These readings use numerical leverage and optional Green solves,
+    with exact boundary ranks where supported.
 
-    coupling defaults to False and requires a field solve when enabled.
-    Pass field to reuse an existing solve across queries.
-
-    `corpus_rank` is a property of the store rather than of the query, so a caller
-    holding it passes it in instead of having it recomputed per retrieval.
-
-    Nothing is thresholded. Every value is a magnitude for the caller to act on.
-    """
+    ``coupling=True`` requests a field solve. Pass ``field`` to reuse an existing
+    solve, and ``corpus_rank`` to reuse the rank for the same corpus. The returned
+    magnitudes and diagnostic labels describe that declared structure; they do
+    not establish the truth of the answer."""
     from rexgraph.partition import section_readings
 
     ids = np.asarray(sorted({int(i) for i in retrieved}), dtype=np.int64)

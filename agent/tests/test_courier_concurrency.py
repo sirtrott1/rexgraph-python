@@ -17,7 +17,7 @@ from agent import activity, rcdb
 from agent.courier import CarrySpec, Courier
 from rexgraph.graph import RexGraph
 
-run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
 KINDS = ("memory", "local", "sql", "object-file", "object-memory")
 
 

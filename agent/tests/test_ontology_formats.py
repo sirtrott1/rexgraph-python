@@ -467,14 +467,28 @@ def test_an_upload_reports_what_the_file_said(client):
     assert body["predicates"]["is_a"] == 2
 
 
-def test_two_files_upload_as_one_complex(client):
+@pytest.mark.parametrize("use_names,named", [
+    (None, True), ("true", True), ("false", False),
+    ("on", True), ("off", False), ("1", True), ("0", False),
+    ("yes", True), ("no", False), ("", True),
+])
+def test_two_files_upload_as_one_complex(client, use_names, named):
     """The annotation set and its ontology, together."""
-    r = _upload(client, ("go.obo", OBO), ("goa.gaf", GAF))
+    options = {} if use_names is None else {"use_names": use_names}
+    r = _upload(client, ("go.obo", OBO), ("goa.gaf", GAF), **options)
     assert r.status_code == 200, r.text[:200]
     body = r.json()
     assert body["files"] == ["go.obo", "goa.gaf"]
-    assert ["TP53", "involved_in", "apoptotic process"] in body["triples"], \
-        "the annotation did not resolve against the ontology through the route"
+    target = "apoptotic process" if named else "GO:0006915"
+    assert ["TP53", "involved_in", target] in body["triples"], \
+        "the annotation did not preserve the requested term representation"
+
+
+def test_an_invalid_name_option_is_refused(client):
+    r = _upload(client, ("go.obo", OBO), use_names="invalid")
+    assert r.status_code == 422
+    assert any(error["loc"] == ["body", "use_names"]
+               for error in r.json()["detail"])
 
 
 def test_a_file_that_cannot_be_parsed_is_named_not_fatal(client):

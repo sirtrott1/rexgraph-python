@@ -535,8 +535,8 @@ class Executor:
                       native_plan=serialized, provenance=(provenance,), execution=tuple(observations))
 
     def execute(self, query: Query | MutationQuery) -> Result:
-        from .execution_trace import evidence_scope
-        with evidence_scope(self.evidence):
+        from .execution_trace import evidence_scope, query_resource_scope
+        with evidence_scope(self.evidence), query_resource_scope():
             result = self._execute(query)
             if self.exactness_policy == "exact":
                 from .evaluation_policy import require_exact
@@ -684,6 +684,14 @@ def value_exactness(value: Any) -> Exactness:
         return Exactness.APPROXIMATE
     if isinstance(value, ExactArray):
         return Exactness.RATIONAL if value.kind.any() else Exactness.INTEGER
+    if isinstance(value, dict) and value.get("kind") in {"cpp_algebraic_query_observation", "cpp_algebraic_window_observation"}:
+        from rexgraph.cpp_algebraic_query import validate_algebraic_observation
+        validate_algebraic_observation(value, max_coordinates=(1 << 64) - 1)
+        return Exactness.ALGEBRAIC
+    if isinstance(value, dict) and value.get("kind") == "cpp_algebraic_grade_metric_observation":
+        from rexgraph.cpp_algebraic_metric import validate_algebraic_grade_metric_observation
+        validate_algebraic_grade_metric_observation(value, max_coordinates=(1 << 64) - 1)
+        return Exactness.ALGEBRAIC
     from .program_transformation import ProgramTransformation
     if isinstance(value, ProgramTransformation):
         return Exactness.STRUCTURAL
@@ -691,7 +699,8 @@ def value_exactness(value: Any) -> Exactness:
     if isinstance(value, (ModelState, ModelBatch, ModelTimeline, ModelInput)):
         return Exactness.STRUCTURAL
     if isinstance(value, ModelOutput):
-        return Exactness.RATIONAL if value.arithmetic == "rational" else Exactness.APPROXIMATE
+        return (Exactness.RATIONAL if value.arithmetic == "rational" else
+                Exactness.ALGEBRAIC if value.arithmetic == "algebraic" else Exactness.APPROXIMATE)
     from rexgraph.cells import CellBoundary, CellCoboundary, CompositeBinary
     from rexgraph.chain_map import ChainHomotopy, ChainMap, GradedMap, SymmetryGroup
     if isinstance(value, SymmetryGroup):

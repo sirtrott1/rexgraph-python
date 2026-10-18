@@ -1,22 +1,23 @@
-"""
-agent.connectors.template: copy this file to start a new connector.
+"""A starting point for a structural connector to an external source.
 
-A connector teaches the engine one system. The whole job is: read your source
-read only, and emit its relationships as edges. Everything else (the math, the
-store, the analyses) follows from that. Fill in the two TODOs below.
+Copy this file, replace the source reading and edge construction steps in
+MyConnector, and declare the capabilities it actually emits. This template
+uses pairwise links; richer relation declarations need a construction that
+preserves their full participant sets.
 
-    cp agent/connectors/template.py agent/connectors/my_system.py
+From the repository root:
 
-Then validate it turns your integration into a pass/fail known quantity:
+    cp agent/agent/connectors/template.py agent/agent/connectors/my_system.py
+
+Validate the connector against a representative input:
 
     from agent.connectors.validate import validate_connector
     from agent.connectors.my_system import MyConnector
     print(validate_connector(MyConnector(), my_source))
 
-Run this file directly to see the worked example execute end to end:
+The local example needs no external service:
 
-    python -m agent.connectors.template
-"""
+    python -m agent.connectors.template"""
 
 from __future__ import annotations
 
@@ -40,19 +41,18 @@ class MyConnector(BaseConnector):
     )
 
     def read(self, source: Any) -> tuple[Any, dict[str, Any]]:
-        # TODO 1: READ YOUR SOURCE (read only)
-        # Pull the *structure* only: the entities and how they relate. Never
-        # read cell/row values; the engine persists structure, not data.
+        # Replace with a read only source adapter. This structural connector
+        # selects entities and links; record payload ingestion is a separate step.
         # Produce, from your source:
         #   labels : list[str]                 one per entity (vertex)
         #   links  : list[(src_label, dst_label)]   one per relationship (edge)
         labels: list[str] = []          # e.g. table / node / class names
         links: list[tuple[str, str]] = []   # e.g. child->parent FK pairs
 
-        # TODO 2: EMIT EDGES
+        # Map the selected pairwise links to the vertex indices above.
         # Map each relationship to an edge between two vertices. B₁ is built for
         # you from these index pairs (source = -1, target = +1). Optionally:
-        #   weights  : list[float]   per edge: cardinality/magnitude -> strain
+        #   weights  : list[float]   per edge, with an application defined meaning
         #   modality : list[dict]    per edge: {"nullable":..,"identifying":..}
         #   faces    : np.ndarray    dense B₂ (nE×nF) if some edges co close
         idx = {name: i for i, name in enumerate(labels)}
@@ -73,9 +73,10 @@ class MyConnector(BaseConnector):
 # a worked example that runs immediately
 
 class ExampleEdgesConnector(BaseConnector):
-    """A trivial connector over an in memory edge list, a stand in for "any
-    system that can enumerate its relationships." Weighted so strain is
-    available. Runs with no external service."""
+    """Read weighted in memory links as a small structural source.
+
+    Weights are the supplied cardinalities. Their analysis follows that chosen
+    interpretation; the connector does not infer a physical metric from them."""
 
     CAPABILITIES = Capabilities(weights=True, schemes=("example",))
 

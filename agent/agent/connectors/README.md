@@ -1,8 +1,12 @@
 # Connectors
 
-Connectors read source structure and return a relational complex with metadata.
-They expose relationships, labels, optional weights and faces through one
-interface. A connector reads its source without modifying it.
+A connector determines which relationships an application sees in an external
+source. It reads that source and returns a complex with labels, optional weights,
+faces and metadata. The source remains unchanged.
+
+Inspect the connector's construction before interpreting its analysis results.
+A foreign key, an RDF statement and a broker event need not describe the same
+kind of relation merely because each can be listed as edges.
 
 ## Installation
 

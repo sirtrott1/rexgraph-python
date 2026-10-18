@@ -14,9 +14,9 @@ import pathlib
 import sys
 import types
 
-_test_scripts = str(pathlib.Path(__file__).resolve().parents[2] / "scripts")
-if _test_scripts not in sys.path:
-    sys.path.insert(0, _test_scripts)
+_test_support = str(pathlib.Path(__file__).resolve().parents[2] / "rexgraph/tests/_support")
+if _test_support not in sys.path:
+    sys.path.insert(0, _test_support)
 from _rexgraph_test_state import prepare_test_state
 _TEST_HOME = prepare_test_state()
 

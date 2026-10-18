@@ -1,44 +1,22 @@
-"""Native eigenfree interfacing and explicitly basis dependent mode diagnostics.
+"""Numerical interfacing scores with separately requested mode diagnostics.
 
-Native scores preserve the three contractions in the dense reference, without
-materializing ``S_T = B1^T L0^+ B1``, a dense pseudoinverse, or an eigenbasis.
-The five legacy mode dependent fields are None unless explicitly requested from
-the oracle. channel_direction is a separate three score normalization.
+The source rho is scattered to vertices. A minimum norm solve gives
+y = L0^+ rho and psi = B1.T y. Three contractions then report the
+topological, unsigned G and frustration channel responses. The topological
+contraction reuses y through the projector identity, avoiding a second
+solve. These are numerical sparse actions; the algebraic identity does
+not make their floating results exact.
 
-Field taxonomy
+``channel_direction`` normalizes those three scores. ``efficiency`` counts
+activating and deactivating boundary entries. Neither requires a dense
+pseudoinverse or an eigenbasis.
 
-EIGEN FREE (tight parity to the dense oracle, ~1e-8 or better):
-  ``rho``: weighted vertex source (scatter add, no linear algebra).
-  ``psi = B1^T L0^+ rho`` - one CG solve of ``L0 + Pi_h`` on the SPARSE graph Laplacian
-                          ``L0 = B1 B1^T``, where ``Pi_h`` projects onto the component
-                          frame. ``L0^# = (L0 + Pi_h)^-1 - Pi_h`` is the harmonic-
-                          complement inverse, equal to ``L0^+`` under the identity
-                          metric. The kernel is written down from the components rather
-                          than found by a solver or a threshold. This is numerical, not
-                          exact arithmetic. No nV x nV pseudoinverse is constructed.
-  ``signal_magnitude``  - ``||psi||``.
-  ``scores[0]`` (I_T)  : topological channel. The dense contraction is
-                          ``target^T S_T psi = (B1 target)^T L0^+ (B1 psi)``, a matrix free
-                          bilinear ``u^T L0^+ v`` (LSQR seam ``pinv_bilinear_form``).
-                          Because ``psi = B1^T L0^+ rho`` and ``L0 L0^+`` is the projector
-                          onto ``range(L0)``, ``L0^+ (B1 psi) = L0^+ L0 (L0^+ rho) = L0^+ rho = y``,
-                          so ``I_T = (B1 target)^T y`` with ``y = L0^+ rho`` already in hand -
-                          exact and solve-free (see parity test, which also cross-checks
-                          the literal two-solve ``pinv_bilinear_form`` form).
-  ``scores[1]`` (I_G)  : normalized G-channel: ``target^T L_O psi`` (down sector).
-  ``scores[2]`` (I_F)  : frustration: ``target^T L_SG psi`` (sparse integer F = T - G matvec).
-  ``channel_direction``, ``efficiency``: assembled from the above (efficiency counts
-                          activating/deactivating boundary entries straight from sparse B1 rows).
-
-SPECTRAL (per mode densities over the edge RL spectrum; no matrix free reduction):
-  ``schrodinger = sum_j (v_j.psi)^2 (v_j.target)^2`` over ``lambda_j > 0``: degree 4 in the
-                          eigenvectors, not a trace / bilinear, so it genuinely needs the modes.
-  ``coverage``          - fraction of positive RL modes activated by psi (per mode count).
-  These are available only through ``build_interfacing_bundle_oracle``. They
-  depend on the chosen basis within repeated eigenspaces, not merely the operator.
-  Full dense and explicitly requested partial spectra carry distinct metadata.
-  No graph size threshold silently substitutes a partial reading for a full one.
-"""
+Per mode coverage and schrodinger readings are available through
+``build_interfacing_bundle_oracle``. They use the selected eigenvectors and
+can change with the basis inside a repeated eigenspace. The ordinary bundle
+leaves its five mode dependent fields as None. Full and explicitly requested
+partial spectra have distinct metadata, so a graph size threshold does not
+silently change which reading was requested."""
 from __future__ import annotations
 
 import numpy as np

@@ -37,16 +37,14 @@ __all__ = ["section_readings", "section_response", "section_coverage", "document
 
 
 def section_readings(rex, sections, *, leverage=None, verify=True):
-    """Readings for each section of a sectioning of the relations.
+    """Measure named groups of relation indices in the same complex.
 
-    `sections` maps a name to the relation indices it contains. Sections may overlap, and
-    group sections DO: a pairwise relation belongs to every group holding both its
-    members. The closure identity is asserted only for a genuine partition, meaning the
-    sections are disjoint AND cover every relation; an overlapping cover double counts
-    mass and closing on the rank is not something it can be expected to do.
+    ``sections`` maps each name to its indices and may overlap. Shared relations
+    then contribute to each group's reading. Rank closure is checked only when
+    the groups are disjoint and cover all relations; summing an overlapping
+    cover would count shared leverage repeatedly.
 
-    Returns `{name: {n, mass, own_rank, efficiency, own_cycles, share, gap}}`.
-    """
+    Returns ``{name: {n, mass, own_rank, efficiency, own_cycles, share, gap}}``."""
     from rexgraph.graded_boundary import _sparse_rank
 
     nE = int(rex.nE)
@@ -143,41 +141,36 @@ def coupling_fraction(rex, sections, *, field=None):
 
 
 def _leverage_of(B, *, block=None):
-    """diag of the projector onto row(B), matrix free and in blocks.
+    """Read diag(B.T (B B.T)^+ B) through the shared blocked solve.
 
-    `R_eff(c) = b_c^T (B B^T)^+ b_c` with the kernel deflated, which is the same solve
-    `_effective_resistance_batch` runs at grade 1, so both go through the one primitive
-    rather than blocking the same solve two different ways.
-    """
+    Grade one effective resistance and higher grade leverage use
+    ``leverage_diagonal`` so their numerical tolerances and memory blocking
+    follow the same implementation."""
     from rexgraph.fiedler import leverage_diagonal
 
     return leverage_diagonal(B, block=block)
 
 
 def grade_leverage(rex, k, *, verify=True):
-    """The leverage at grade `k`: the diagonal of the projector onto row(B_k).
+    """Return the row space projector diagonal for boundary B_k.
 
-    Nothing about the grade 1 reading was about grade 1. `R_eff(e) = z^T B^T (B B^T)^+ B
-    z` is the e-th diagonal of the orthogonal projector onto the row space, so writing it
-    for `B_k` is the same expression with a different operator, and every reading built on
-    it comes with it: a cell's mass, its share of the cycle space, and a section's gap.
+    The projector distributes boundary rank over cells at grade k. Its
+    complement distributes dim ker(B_k), giving a section its cycle share::
 
-    Foster generalises with it and is the self test at every grade::
+        sum_c R_eff_k(c) = rank(B_k)
+        sum_c (1 - R_eff_k(c)) = dim ker(B_k)
 
-        sum_c R_eff_k(c) = rank(B_k)        so   sum_c (1 - R_eff_k(c)) = dim ker(B_k)
-
-    Returns `(leverage, rank)`. An empty grade returns an empty array and rank 0.
-    """
+    ``verify`` checks the numerical trace against the returned rank within a
+    tolerance. Returns ``(leverage, rank)``; an empty grade has an empty array
+    and rank zero."""
     import scipy.sparse as sp
 
     Bs = rex.graded_boundaries()
     if k < 1 or k > len(Bs):
         raise IndexError(f"grade {k} outside 1..{len(Bs)} for this complex")
     if k == 1:
-        # DELEGATE. _effective_resistance_batch is the canonical reading: it settles
-        # bridges by one walk with no solve at all, runs deflated block CG for the rest,
-        # and only reaches a dense decomposition behind check_dense_allocation. Writing
-        # a bare SVD here threw all of that away.
+        # Reuse the grade one path: bridge traversal avoids unnecessary solves,
+        # and the remaining columns retain its metric and memory policy.
         nE = int(rex.nE)
         lev = np.asarray(rex._effective_resistance_batch(np.arange(nE)))
         rank = int(rex.rank_tower()["ranks"][0])
@@ -194,39 +187,25 @@ def grade_leverage(rex, k, *, verify=True):
 
 
 def section_tensor(rex, sections, *, grades=None, leverage=None, verify=True):
-    """The embedding as a graded tensor, not a row of scalars.
+    """Return section measurements with section, grade and reading axes.
 
-    A section's reading is indexed by GRADE as well as by what is being read, because the
-    same construction repeats at every grade over that grade's boundary operator. So the
-    object is `E[section, grade, reading]` and flattening it to one vector per section
-    throws away the axis that says which grade the structure lives at.
+    The grade axis identifies which boundary supplied each measurement. The
+    reading axis contains n, mass, own_rank, efficiency, own_cycles, share and
+    gap, together with the section's integer Hodge block dimensions::
 
-    The readings per (section, grade) are the ones the leverage supports there: `n`,
-    `mass`, `own_rank`, `efficiency`, `own_cycles`, `share`, `gap`, plus the section's OWN
-    Hodge blocks as exact integers. The blocks come from the rank tower restricted to the
-    section, which is what makes them coordinates rather than a per grade constant::
+        gradient(S, k) = rank(B_k |S)
+        curl(S, k) = rank(B_{k+1} |S)
+        harmonic(S, k) = n_k - gradient - curl
+        own_cycles = curl + harmonic
 
-        gradient(S, k) = rank(B_k |S)                  what its own boundary spans
-        curl(S, k)     = rank(B_{k+1} |S)              what its own faces fill
-        harmonic(S, k) = n_k - gradient - curl         its own beta_k, what stays a hole
+    The last split distinguishes cycles filled by the section's faces from
+    unfilled cycles. These are dimensions, not Hodge component fields; the
+    tensor summarizes the source and cannot reconstruct it.
 
-    and that is also the decomposition of a reading the flat version left whole::
-
-        own_cycles = n_k - gradient = curl + harmonic
-
-    A section carrying cycles says nothing about whether they are filled. Splitting them
-    is the difference between "there is a loop here" and "there is a hole here", so the
-    block axis is the one that makes `own_cycles` actionable.
-
-    `sections` maps a name to that grade's cell indices. To section several grades, pass
-    `{name: {grade: ids}}`; a flat `{name: ids}` is read as grade 1.
-
-    `leverage` maps grades to arrays. Pass previously computed values to reuse one
-    solve across multiple sectionings of the same complex.
-
-    Returns `(tensor, axes)` with `tensor[i, k, r]` and
-    `axes = {"sections": [...], "grades": [...], "readings": [...]}`.
-    """
+    ``sections`` accepts ``{name: {grade: ids}}`` or ``{name: ids}`` for grade 1.
+    Pass previously computed arrays in ``leverage`` to reuse solves on the same
+    complex. Returns ``(tensor, axes)`` with tensor[i, k, r] and named sections,
+    grades and readings in ``axes``."""
     from rexgraph.graded_boundary import _sparse_rank
 
     per_grade = {}

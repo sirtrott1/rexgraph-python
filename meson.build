@@ -1,17 +1,14 @@
 # RexGraph root build definition (meson-python backend).
 # Compiles all Cython extensions to shared objects.
 
-# pip install . # standard build
-# pip install -e ".[dev]" --no-build-isolation # editable
-# python -m pytest tests/ # run tests
+# Use make install-core for a regular build or make install-dev for development.
+# Tests live in rexgraph/tests; run them against the selected installed runtime.
 project(
     'rexgraph',
     'c', 'cython',
-    # pyproject.toml is authoritative: it declares the version statically, so meson-python
-    # takes the distribution's version from there and this one is only what meson itself
-    # reports (meson-dist filenames, `meson introspect`). It had drifted to 1.0.1 against
-    # a 1.0.6 package, which is harmless until someone reads it and believes it.
-    version: '1.3.1',
+    # Keep Meson's reported version aligned with pyproject.toml, which supplies
+    # the distribution metadata used by meson-python.
+    version: '1.3.2',
     license: 'Apache-2.0',
     meson_version: '>=1.2.2',
     default_options: [
@@ -28,13 +25,10 @@ py = import('python').find_installation(pure: false)
 cc = meson.get_compiler('c')
 c_args = []
 link_args = []
-# Native/fast-math tuning is OPT-IN. By default the build is portable
-# (no -march=native) and IEEE-correct (no -ffast-math), so wheels built on
-# one machine run on any compatible CPU and numerics are reproducible.
-# For a machine-specific optimized build:
-# pip install . -Csetup-args=-Dnative=true
-# WARNING: -march=native binaries crash with SIGILL on older CPUs, and
-# -ffast-math relaxes NaN/inf handling and float reproducibility.
+# Portable builds avoid CPU-specific instructions and relaxed float rules.
+# Select -Dnative=true for a build intended for the current machine. On GCC and
+# Clang this enables -march=native and -ffast-math, which can require newer CPU
+# instructions and change NaN, infinity and rounding behavior.
 if cc.get_id() == 'gcc' or cc.get_id() == 'clang'
     if get_option('native')
         c_args += ['-march=native', '-ffast-math']
@@ -49,21 +43,12 @@ elif cc.get_id() == 'msvc'
     endif
 endif
 
-# Use the ACTIVE interpreter's numpy headers (numpy.get_include()), NOT whatever
-# `dependency('numpy')` resolves to globally. Otherwise the C compile can include a
-# DIFFERENT numpy's headers than the one Cython generates code against (e.g. a stray
-# ~/.local numpy for another Python version), so Cython emits PyDataType_* / datetime
-# C-API calls the mismatched headers don't declare -> "implicit declaration" build
-# failures. Binding the include to `py`'s own numpy keeps pxd and headers in lockstep.
-#
-# Passed as a COMPILE ARGUMENT rather than through include_directories(). That function
-# refuses an absolute path that lands inside the source tree, and numpy's include path
-# lands there whenever the virtualenv is `.venv/` in the project directory, which is the
-# ordinary layout. The result was that `pip install -e .` failed outright for anyone
-# using it: "Tried to form an absolute path to a dir in the source tree." A -I argument
-# says exactly the same thing to the compiler and carries no opinion about where the
-# directory sits. MSVC takes /I; it also accepts -I, but not every wrapper around it
-# does, so the branch is explicit.
+# Query NumPy through the build interpreter so Cython declarations and C headers
+# come from the same installation. A global dependency lookup can select another
+# interpreter's headers and produce incompatible C API declarations.
+# Pass the path as a compiler argument: a virtual environment inside the checkout
+# puts NumPy under the source tree, which include_directories() refuses as an
+# absolute include path. Use /I for MSVC and -I for the other compilers.
 numpy_inc = run_command(py, '-c', 'import numpy; print(numpy.get_include())',
                         check: true).stdout().strip()
 numpy_dep = declare_dependency(

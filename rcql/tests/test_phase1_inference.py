@@ -543,7 +543,7 @@ def test_typing_a_call_does_not_require_the_machinery_that_would_run_it():
     # child process precisely because the fix lives in the parent's interpreter state.
     from pathlib import Path
     from runpy import run_path
-    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
     with tempfile.TemporaryDirectory() as neutral:
         out = run_isolated(program, packages=("rcql",), capture_output=True,
                            text=True, check=True, cwd=neutral).stdout.strip()
@@ -583,8 +583,15 @@ def test_declared_dependencies_match_what_the_package_actually_imports():
 
     stdlib = set(sys.stdlib_module_names)
     imported: set[str] = set()
+    imported_at_module_scope: set[str] = set()
     for path in sorted((package / "rcql").rglob("*.py")):
-        for node in ast_module.walk(ast_module.parse(path.read_text())):
+        tree = ast_module.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast_module.Import):
+                imported_at_module_scope |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast_module.ImportFrom) and node.level == 0 and node.module:
+                imported_at_module_scope.add(node.module.split(".")[0])
+        for node in ast_module.walk(tree):
             if isinstance(node, ast_module.Import):
                 imported |= {alias.name.split(".")[0] for alias in node.names}
             elif isinstance(node, ast_module.ImportFrom) and node.level == 0 and node.module:
@@ -595,6 +602,12 @@ def test_declared_dependencies_match_what_the_package_actually_imports():
     }
     # rcdb is an optional extra and is imported inside functions, never at module scope
     third_party.discard("rcdb")
+    assert "rexgraph_cpp" not in imported_at_module_scope
+    if "rexgraph_cpp" in third_party:
+        optional_native = meta["optional-dependencies"]["native"]
+        assert any(re.split(r"[<>=!\[ ]", spec, maxsplit=1)[0] == "rexgraph-cpp-bindings"
+                   for spec in optional_native)
+        third_party.remove("rexgraph_cpp")
 
     assert third_party == declared, {
         "imported but not declared": sorted(third_party - declared),

@@ -2268,22 +2268,16 @@ class RexGraph:
 
     @cached_property
     def _chain_col_bounds(self):
-        """Per face, whether ``B_1 B_2[:, f]`` vanishes EXACTLY. Returns bool[nF].
+        """Return bool[nF] indicating exact cancellation in each face boundary.
 
-        The chain condition holds at zero, not near it. B_1's columns carry the share
-        1/(k-1), which is not binary exact for most arities, so a face that genuinely
-        bounds can come back at 1e-17 through a float product and a tolerance there is
-        standing in for the arithmetic rather than for the mathematics. Solving the same
-        product over Fraction removes the question: a face bounds or it does not.
+        Canonical branching shares such as 1/(k-1) need not be representable in
+        binary64. A floating residual near zero would mix representation error with
+        a failed chain law, so those products are checked over Fraction.
 
-        The pairwise case is exact in float already, since a 2 ary column is (-1, +1)
-        and an integer product below 2^53 is represented without loss. That is a guarded
-        shortcut on the same integer, not a second rule: any other arity, or a
-        non integer face coefficient, takes the rational path.
-
-        Costs one exact matvec per face over that face's own support, the same order as
-        the solve in `faces.solve_face_column` that produced the column.
-        """
+        Pairwise columns with bounded integer face coefficients can use binary64
+        without loss. The bound covers every partial sum, including large terms
+        that later cancel. Other columns take the rational path, with one sparse
+        boundary product per face."""
         if self._nF == 0 or self._B2_dual is None:
             return np.zeros(0, dtype=bool)
 
@@ -2296,8 +2290,8 @@ class RexGraph:
             arity_ok = bool(widths.size == 0 or widths.max() <= 2)
         data = B2s.vals_csc
         integral = bool(np.all(np.isfinite(data)) and np.all(data == np.round(data)))
-        # Integer products are exact in binary64 only while ALL partial sums
-        # fit. A large cancelling face must take Q, not a false floating zero.
+        # Bound every partial sum; large terms that cancel can otherwise hide
+        # rounding error behind a floating zero.
         bounded = integral and all(
             sum(abs(int(v)) for v in data[B2s.col_ptr[f]:B2s.col_ptr[f+1]]) <= 2**53
             for f in range(self._nF))
@@ -3675,14 +3669,17 @@ class RexGraph:
 
     @cached_property
     def channel_spectral_gaps(self) -> dict:
-        """Exact per channel spectral gap lambda_2 (smallest positive eigenvalue of each
-        trace normalized hat), a dict keyed by channel name ('L1_down','L_O','L_SG','L_C').
+        """Estimate the smallest positive eigenvalue of each normalized channel.
 
-        A METRIC, not the relational relaxation object. T and G use the transpose duality
-        (lambda_2 of the tiny nV x nV vertex dual Laplacian, kernel beta_0) so the
-        topological zeros collapse into the small vertex space and the gap is EXACT and
-        cheap; C/F use the kernel robust path. The edge centric relaxation is the moment
-        tower (energy_character / harmonic_entropy / greens_character_edge), separate."""
+        Returns a dict keyed by channel name: L1_down, L_O, L_SG and L_C. T and raw
+        G use the shared nonzero spectrum of a boundary Gram operator and its
+        smaller vertex dual. C, F and normalized G use their channel operators.
+        Small operators use numerical spectra; larger operators use approximate
+        minimum norm inverse iteration.
+
+        These are numerical gap summaries, separate from the moment and Green
+        responses in energy_character, harmonic_entropy and greens_character_edge.
+        They do not certify an exact algebraic eigenvalue."""
         if not _HAS_RCF or self._nE == 0:
             return {}
         from rexgraph.sparse_character import channel_spectral_gaps
@@ -3690,10 +3687,12 @@ class RexGraph:
 
     @cached_property
     def per_channel_mixing_times(self) -> NDArray:
-        """Per channel mixing time METRIC mu_X = ln(nE) / lambda_2(hat_X). Shape (nhats,).
-        lambda_2 is the exact channel_spectral_gaps (T/G exact via the transpose duality,
-        C/F kernel robust). This is a spectral gap summary; the edge centric relaxation
-        is the moment tower, not this."""
+        """Return ln(nE) / lambda_2(hat_X) in channel order, shape (nhats,).
+
+        These spectral gap summaries inherit the numerical accuracy of the gap
+        calculation. They are distinct from the relation local moment responses.
+        Sparse handling of zero mass, missing positive gaps and nE <= 1 is defined
+        by ``per_channel_mixing_times_sparse``."""
         if not _HAS_RCF:
             return np.zeros(0, dtype=_f64)
         if self._use_sparse_character:
@@ -4114,21 +4113,18 @@ class RexGraph:
         }
 
     def _explain_edge_dynamic(self, idx: int) -> dict:
-        """Single edge (relation) diagnostic: its place in the Hodge tower plus its
-        criticality: all from sparse local reads and ONE diffusion, no dense B1/B2/K1
-        scans and no eigendecomposition. Matches the _query.explain_edge contract:
-          below   = boundary participants                   : sparse B1 column, ∂/down
-          above   = co boundary faces containing the edge   : sparse B2 row, δ/up
-          lateral = sibling relations sharing a participant : C0 stars (_v2e)
-          chi     = channel character [T,G,F,C]             : diagonals, O(nnz)
-          effective_resistance = b_e^T (B1 B1^T)^+ b_e     : sparse Green action
-          relational_self_response = RL4^+[e,e]             : relation space diffusion.
+        """Read a relation's local incidence and numerical response diagnostics.
 
-        The first reading is the classic primary boundary leverage (high means
-        load bearing); the second is the relation space response. Both preserve the
-        sparse declared carrier. Their numerical Green actions are distinct from the
-        exact integer/rational topology and rank paths.
-        """
+        ``below`` reads boundary participants from a B1 column; ``above`` reads
+        incident faces from a B2 row; ``lateral`` follows shared vertex stars.
+        ``chi`` gives its structural channel readings. Numerical Green actions
+        supply primary boundary leverage and a separate relation space response.
+
+        Boundary leverage measures the relation's contribution to the boundary
+        row space; the other response uses the relation operator. Preparing sparse
+        structures and cached channel data can visit the complete source. The
+        result avoids a dense diagnostic matrix, but its work is not bounded by
+        the number of neighbors returned."""
         from rexgraph.core._sparse import to_scipy_csr
         idx = int(idx)
         nhats = int(self.nhats)
@@ -4183,17 +4179,19 @@ class RexGraph:
     def explain_context(self, vertices: NDArray = None, edges: NDArray = None,
                         t: float = 1.0, threshold: float = 1e-6,
                         max_cells: int | None = None) -> dict:
-        """The forged contextual picture around query ENTITIES (vertices) and RELATIONS
-        (edges): the unified view the LLM reads. Per seed diagnostics (explain_vertex
-        for entities, explain_edge for relations) PLUS the bounded relevant sub complex
-        reached by ONE heat diffusion seeded across both grades: a vertex seed injects
-        its incident edge boundaries (B₁ᵀ e_v), an edge seed injects itself (e_e), the
-        combined edge signal diffuses through RL4 (e^{-t·RL4}), and the reached edges
-        (relations) and their projected vertices (entities) form the isolated
-        neighborhood. One diffusion, localized to the signal's reach: no whole graph
-        enumeration, scale free. Seed either grade or both; small t -> tight, larger t ->
-        wider. Returns {seed_vertices, seed_edges, neighborhood:{vertices,
-        vertex_weights, vertex_coherence, edges, edge_weights, edge_character}}."""
+        """Return seed diagnostics and a filtered numerical response neighborhood.
+
+        Vertex seeds inject B1.T e_v and relation seeds inject e_e. A Chebyshev
+        polynomial of degree 39 approximates exp(-t RL4) on the full relation carrier;
+        B1 maps that response to vertices. ``threshold`` selects the displayed
+        values, and ``max_cells`` caps the selected vertices and relations separately.
+
+        The neighborhood is an observation of that global numerical action. Its
+        selected cells need not be closed under the boundary, and its size does
+        not bound the work or memory used by the response. It is not the exact
+        local solve with a preserved interface provided by the native field APIs.
+        Returns seed_vertices, seed_edges and neighborhood with indices, response
+        weights and channel readings."""
         from rexgraph.core._sparse import to_scipy_csr
         vseeds = np.asarray(vertices if vertices is not None else [], dtype=int).ravel()
         eseeds = np.asarray(edges if edges is not None else [], dtype=int).ravel()
@@ -4324,18 +4322,17 @@ class RexGraph:
     def agentic_reading(self, vertices: NDArray = None, edges: NDArray = None,
                         t: float = 1.0, max_cells: int | None = None,
                         top_k: int = 8) -> dict:
-        """The decision ready agentic reading over a query's ENTITIES and RELATIONS -
-        the keystone the agent/LLM layer consumes. One forged diffusion
-        (``explain_context``) reduced to what a turn needs:
-          neighborhood : the bounded relevant sub complex (entities + relations).
-          load_bearing : relations ranked by effective_resistance: the BRIDGES
-                         (high = critical/near-unique, removal fragments), top_k.
-          frustrated   : entities whose coherence is a LOW outlier (data adaptive lower
-                         Tukey fence on the neighborhood's κ) - the incoherent/frustrated.
-          context_size : |reached vertices| + |reached edges|: the bounded relevant
-                         size, i.e. the real token/cost driver (how much context a
-                         correct answer needs).
-        All demand driven and bounded: no whole graph enumeration."""
+        """Summarize a response neighborhood for an application decision.
+
+        ``explain_context`` supplies seed diagnostics and the filtered neighborhood.
+        ``load_bearing`` ranks selected relations by numerical effective resistance.
+        ``frustrated`` names vertices whose coherence falls below the neighborhood's
+        lower Tukey fence; this diagnostic name does not establish a semantic
+        conflict. ``context_size`` counts selected vertices and relations.
+
+        ``max_cells`` and ``top_k`` bound returned selections. The underlying
+        response still acts on the full carrier, so these counts do not measure
+        total execution cost or the context sufficient for a correct answer."""
         ctx = self.explain_context(vertices=vertices, edges=edges, t=t,
                                    max_cells=max_cells)
         nb = ctx['neighborhood']
@@ -4371,10 +4368,8 @@ class RexGraph:
         if not _HAS_RCF:
             raise RuntimeError("RCF modules not available.")
         if dim == 1:
-            # Demand driven: below/above/lateral from the sparse boundary/coboundary/
-            # endpoint stars, χ from diagonals, and effective_resistance = RL4⁺[e,e]
-            # from ONE diffusion: no dense B1/B2/K1 scans and no eigendecomposition
-            # (the dense kernel returned NaN for effective_resistance at scale).
+            # Keep primary boundary leverage separate from the RL4 self response;
+            # _explain_edge_dynamic computes and names both readings.
             return self._explain_edge_dynamic(idx)
         elif dim == 0:
             # Demand driven: diffuse from the single query vertex (φ via

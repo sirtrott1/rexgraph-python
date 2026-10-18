@@ -1,9 +1,14 @@
 # RexGraph I/O
 
-The I/O package reads declared records, saves native complexes and exports
-columnar data. Reading a source and defining its relations are separate steps:
-the reader handles file syntax and field types, while a relation mapping states
-which fields identify participants, weights and other declarations.
+A table tells the reader where its columns are; it does not tell the application
+which columns define a relation. The I/O package keeps those choices separate.
+A schema controls field types and number conversion, and a relation mapping
+selects participants, weights and other declarations.
+
+Saving the resulting complex is a different choice. A native container carries
+its complete registered state, while a table export carries the columns in its
+schema. Use the native form when the next application must reconstruct the same
+complex, including exact values and presence information.
 
 ## Installation
 
@@ -34,6 +39,8 @@ state identity.
 | Format | Use | Dependency |
 | --- | --- | --- |
 | RCBD | Native complex and temporal bundles | Core |
+| RCBF | Import of a supported current C0–C2 snapshot | Core |
+| Native JSON | Complete graph or temporal state in a versioned JSON envelope | Core |
 | safetensors | Native tensor state and model transport | safetensors |
 | HDF5 | Native graphs, arrays, caches and result groups | h5py |
 | Zarr | Native graphs, arrays, caches and result groups | Zarr |
@@ -47,6 +54,40 @@ A table export contains the columns selected by its schema. Use a native
 container to preserve a complete complex. Arrow and Parquet coefficient
 columns preserve integer and rational kinds, presence and large integers;
 an undeclared float in an exact column requires an explicit conversion rule.
+
+RCBF is an import format; RCBD is a directory container. `load_rcbf(path)`
+preserves supported boundary, label, relation, face and boundary slot metadata.
+Save that graph with `save_rcbd` or put it into RCDB. Stored temporal states
+require `allow_current_snapshot=True` to request the current snapshot explicitly;
+that option does not import their history. Mixed directedness, inexact C2
+coefficients, duplicate signal names and unclaimed timeless tails are rejected.
+
+The C++ RFC formats use their own owning readers and admission limits. Generic
+`load` does not interpret `.rfcx`, `.rfcxs`, `.rfcxa` or `.rfcxg` as a Core
+container. For a supported algebraic RFCXA archive, retain its complete bytes
+through the bridge's record adapter:
+
+```python
+from pathlib import Path
+from rexgraph_cpp import NativeAlgebraicArchive
+from rexgraph.io.algebraic_record import algebraic_record, read_algebraic_record
+
+archive = NativeAlgebraicArchive(Path("fields.rfcxa").read_bytes())
+save_rcbd("fields.rcbd", algebraic_record(archive))
+restored = read_algebraic_record(load_rcbd("fields.rcbd"))
+assert restored.archive == archive.archive
+```
+
+RFCXG graphs and RFCXS histories have distinct adapters and retain their named
+owners and source cutoffs. See the [bridge usage guide](../../bindings/cpp/README.md).
+An extension alone does not declare a transport between these carriers.
+
+`save("graph.json", rex)` writes complete canonical state, including exact
+values, relation identities and registered fields. Its `rexgraph-state-v1`
+envelope contains a base64 native value payload; `load` validates the restored
+state. Earlier graph JSON and external JSON source formats remain readable.
+`rex.to_json()` remains the older graph view export and does not carry the full
+state. JSON state transport does not calculate a layout or spectral diagnostics.
 
 ## Reading a weighted table
 
@@ -96,6 +137,19 @@ options. Streaming bounds the input batches; the final relational complex still
 occupies memory proportional to its retained cells and coefficients. The
 [reader reference](REFERENCE.md#declared-reader-capabilities) lists source and
 streaming contracts.
+
+Arrow IPC streams can be forward only. JSON arrays use bounded whole document
+storage and accept fragmented reads; JSONL and CSV yield batches as records
+arrive. Caller supplied streams remain open when iteration ends or is cancelled.
+For indexed RCBD access, use logical tensor names such as
+`bundle["checkpoint/0/boundary_idx"]`; the bundle handles filename encoding.
+
+Arrow array streaming slices oversized file batches to the requested positive
+`batch_rows` limit. Matrix rows that cross file batches are buffered until
+complete; differently shaped arrays retain their own row boundaries. IPC reads
+use a memory map, and yielded NumPy arrays retain their data after the stream is
+closed. Arrow IPC and Parquet writers stage output before publication so a
+failed write preserves an existing file.
 
 Agent's `auto_rex` offers automatic adapters for common files, arrays, DataFrames
 and text. Use the declared readers when source typing, relation meaning and

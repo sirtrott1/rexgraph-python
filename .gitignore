@@ -75,3 +75,7 @@ AGENTS.md
 
 # Local generated output
 bio-demo-out/
+
+# Local maintenance scripts are not published.
+/scripts/
+experiments/

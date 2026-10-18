@@ -263,3 +263,7 @@ for _name, _arguments in _RECURSION_ARGUMENTS.items():
 from .transformation_contracts import ARGUMENTS as _TRANSFORMATION_ARGUMENTS
 for _name, _arguments in _TRANSFORMATION_ARGUMENTS.items():
     insert_unique(EXPRESSION_ARGUMENTS, _name, _arguments)
+
+from .native_source_contracts import ARGUMENTS as _NATIVE_SOURCE_ARGUMENTS
+for _name, _arguments in _NATIVE_SOURCE_ARGUMENTS.items():
+    insert_unique(EXPRESSION_ARGUMENTS, _name, _arguments)

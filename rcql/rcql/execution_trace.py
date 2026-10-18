@@ -13,6 +13,21 @@ _OBSERVATIONS = ContextVar("rcql_method_observations", default=None)
 _POLICY_DIGEST = ContextVar("rcql_policy_digest", default="")
 _POLICY = ContextVar("rcql_policy", default=None)
 _ARTIFACT_SERVICES = ContextVar("rcql_artifact_services", default=None)
+_QUERY_RESOURCES = ContextVar("rcql_query_resources", default=None)
+
+
+def current_query_resources():
+    return _QUERY_RESOURCES.get()
+
+
+@contextmanager
+def query_resource_scope():
+    """Retain adapter owners only for the current query, including its validation."""
+    token = _QUERY_RESOURCES.set({})
+    try:
+        yield
+    finally:
+        _QUERY_RESOURCES.reset(token)
 
 
 def current_policy():

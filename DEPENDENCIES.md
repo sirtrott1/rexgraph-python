@@ -158,5 +158,5 @@ For a Core installation that must exclude SciPy, the dedicated smoke test checks
 native operations and deliberate refusal of compatibility exports:
 
 ```sh
-.venv/bin/python -I scripts/smoke_no_scipy.py --require-absent
+.venv/bin/python -I rcql/tests/smoke_no_scipy.py --require-absent
 ```

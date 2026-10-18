@@ -6,6 +6,7 @@ PYTHON ?= $(VENV_DIR)/bin/python
 BASE_PYTHON ?= python3
 INSTALLER ?= auto
 BUILD_JOBS ?= 2
+CPP_SDK_PREFIX ?=
 GPU_BACKEND ?= auto
 NATIVE_HIP ?= auto
 TEST_ARGS ?=
@@ -40,6 +41,11 @@ install-dev-full:
 install-native:
 	$(INSTALL) --profile standard --native
 
+.PHONY: install-cpp
+install-cpp:
+	@test -n "$(CPP_SDK_PREFIX)" || { echo "Set CPP_SDK_PREFIX to the installed rexgraph-cpp SDK prefix."; exit 1; }
+	$(PIP) install ./bindings/cpp --config-settings="cmake.define.CMAKE_PREFIX_PATH=$(CPP_SDK_PREFIX)"
+
 install-gpu:
 	GPU_BACKEND="$(GPU_BACKEND)" NATIVE_HIP="$(NATIVE_HIP)" REQUIRE_GPU=1 TORCH_INDEX_URL="$(TORCH_INDEX_URL)" $(INSTALL) --profile ml --gpu "$(GPU_BACKEND)"
 
@@ -53,12 +59,12 @@ build:
 	$(INSTALL) --profile core --editable
 
 verify:
-	"$(PYTHON)" -I scripts/verify_install.py --profile $(or $(PROFILE),auto)
+	"$(PYTHON)" -I agent/install/verify_install.py --profile $(or $(PROFILE),auto)
 	$(PIP) check
 
 .PHONY: doctor
 doctor:
-	@"$(PYTHON)" -I scripts/check_setup.py $(ARGS)
+	@"$(PYTHON)" -I agent/install/check_setup.py $(ARGS)
 
 python:
 	"$(PYTHON)" -I
@@ -162,7 +168,7 @@ gpu-serve:
 .PHONY: test-agent
 test-agent:
 # Run against the selected wheel or declared editable installation.
-	"$(PYTHON)" -I scripts/test_installed.py --allow-editable --package rexgraph --package rcdb --package agent -- agent/tests -q $(TEST_ARGS)
+	"$(PYTHON)" -I rexgraph/tests/_support/test_installed.py --allow-editable --package rexgraph --package rcdb --package agent -- agent/tests -q $(TEST_ARGS)
 
 .PHONY: test-agent-cli
 test-agent-cli:
@@ -209,19 +215,19 @@ test: test-rexgraph test-agent test-rcdb test-rcql test-system
 
 .PHONY: test-rexgraph
 test-rexgraph:
-	"$(PYTHON)" -I scripts/test_installed.py --allow-editable --package rexgraph -- rexgraph/tests -q $(TEST_ARGS)
+	"$(PYTHON)" -I rexgraph/tests/_support/test_installed.py --allow-editable --package rexgraph -- rexgraph/tests -q $(TEST_ARGS)
 
 .PHONY: test-quick test-rcdb test-rcql test-system
 test-quick: verify
 
 test-rcdb:
-	"$(PYTHON)" -I scripts/test_installed.py --allow-editable --package rexgraph --package rcdb -- rcdb/tests -q $(TEST_ARGS)
+	"$(PYTHON)" -I rexgraph/tests/_support/test_installed.py --allow-editable --package rexgraph --package rcdb -- rcdb/tests -q $(TEST_ARGS)
 
 test-rcql:
-	"$(PYTHON)" -I scripts/test_installed.py --allow-editable --package rexgraph --package rcql -- rcql/tests -q $(TEST_ARGS)
+	"$(PYTHON)" -I rexgraph/tests/_support/test_installed.py --allow-editable --package rexgraph --package rcql -- rcql/tests -q $(TEST_ARGS)
 
 test-system:
-	"$(PYTHON)" -I scripts/test_installed.py --allow-editable --package rexgraph --package rcql --package system -- system/tests -q $(TEST_ARGS)
+	"$(PYTHON)" -I rexgraph/tests/_support/test_installed.py --allow-editable --package rexgraph --package rcql --package system -- system/tests -q $(TEST_ARGS)
 
 # GPU
 
@@ -230,7 +236,7 @@ gpu-status:
 	"$(PYTHON)" -I -m rexgraph.gpu_preflight --diagnose --json
 
 verify-gpu:
-	"$(PYTHON)" -I scripts/setup_gpu.py --verify --require-gpu --backend "$(GPU_BACKEND)" $(ARGS)
+	"$(PYTHON)" -I agent/install/setup_gpu.py --verify --require-gpu --backend "$(GPU_BACKEND)" $(ARGS)
 
 # HPC
 
@@ -251,7 +257,7 @@ import sys; from agent.cli.hpc import write_template; \
 
 .PHONY: clean
 clean:
-	"$(BASE_PYTHON)" -I scripts/clean_cache.py --environment "$(VENV_DIR)"
+	"$(BASE_PYTHON)" -I agent/install/clean_cache.py --environment "$(VENV_DIR)"
 	@echo "Clean"
 
 # Help
@@ -269,6 +275,7 @@ help:
 	@echo "  make verify-gpu        Check GPU calculations and required native kernels"
 	@echo "  make install-all       Install all declared Agent profile dependencies"
 	@echo "  make install-native    Compile for this CPU with relaxed floating point rules"
+	@echo "  make install-cpp       Install the optional C++ bridge using CPP_SDK_PREFIX"
 	@echo "  make serve             Start Agent at http://127.0.0.1:8000"
 	@echo "  make system            Start System at http://127.0.0.1:8010"
 	@echo "  make python            Open Python with the installed packages"
@@ -278,16 +285,3 @@ help:
 	@echo "  make hpc-setup         Install and generate SLURM templates"
 	@echo "Settings: VENV_DIR, INSTALLER, BASE_PYTHON, BUILD_JOBS, TORCH_INDEX_URL"
 	@echo "Installer options: sh install.sh --help"
-
-# Versioning
-#
-# Update package and build versions together; the consistency test checks agreement.
-.PHONY: version
-version:
-ifndef VERSION
-	@"$(PYTHON)" scripts/set_version.py --show
-	@echo ""
-	@echo "Set a version: make version VERSION=x.y.z"
-else
-	@"$(PYTHON)" scripts/set_version.py $(VERSION)
-endif

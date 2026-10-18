@@ -9,7 +9,7 @@ record storage integration and application services.
 #: shared contracts: declared native state, portable results and exact record
 #: metadata require this development series. No release is published by a bump.
 #: pyproject.toml and the other four packages must agree.
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 
 from .auto import auto_analyze, auto_rex, auto_rex_text, detect_input_type
 from .analysis import analyze

@@ -16,7 +16,7 @@ from agent.courier_remote import Peer
 from rcdb import MemoryStore, copy_record, record_packet
 from rexgraph.value_codec import pack_value
 
-run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
 
 
 def selected(value=Fraction(2, 7)):

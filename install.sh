@@ -180,9 +180,9 @@ if [ "$SETUP_GPU" = 1 ]; then
     say "Configuring compute dependencies ($GPU_BACKEND)"
     set -- --backend "$GPU_BACKEND" --native-hip "$NATIVE_HIP"
     [ "$REQUIRE_GPU" != 1 ] || set -- "$@" --require-gpu
-    INENV python -I "$REPO_DIR/scripts/setup_gpu.py" "$@"
-    HIP_BUILD="$(INENV python -I "$REPO_DIR/scripts/setup_gpu.py" --field native_hip)"
-    HIP_TARGETS="$(INENV python -I "$REPO_DIR/scripts/setup_gpu.py" --field targets)"
+    INENV python -I "$REPO_DIR/agent/install/setup_gpu.py" "$@"
+    HIP_BUILD="$(INENV python -I "$REPO_DIR/agent/install/setup_gpu.py" --field native_hip)"
+    HIP_TARGETS="$(INENV python -I "$REPO_DIR/agent/install/setup_gpu.py" --field targets)"
     HIP_BUILD="${HIP_BUILD:-auto}"
     case ",$CORE_EXTRAS," in *,nn,*) ;; *) CORE_EXTRAS="${CORE_EXTRAS:+$CORE_EXTRAS,}nn" ;; esac
 fi
@@ -228,27 +228,27 @@ fi
 say "Verifying the installation"
 CHECK_OPTION=""
 [ "$EDITABLE" != 1 ] || CHECK_OPTION=--allow-editable
-INENV python -I "$REPO_DIR/scripts/verify_install.py" --profile "$PROFILE"
+INENV python -I "$REPO_DIR/agent/install/verify_install.py" --profile "$PROFILE"
 INENV python -m pip check
 if [ "$SETUP_GPU" = 1 ]; then
     if [ "$GPU_VERIFY" = 1 ]; then
         say "Checking the selected compute backend"
-        INENV python -I "$REPO_DIR/scripts/setup_gpu.py" --verify
+        INENV python -I "$REPO_DIR/agent/install/setup_gpu.py" --verify
     else
         say "GPU execution checks deferred. Run the following in a terminal with device access:"
         printf 'make -C "%s" verify-gpu VENV_DIR="%s"\n' "$REPO_DIR" "$VENV_DIR"
     fi
 fi
 if [ "$RUN_CORE_TESTS" = 1 ]; then
-    INENV python -I "$REPO_DIR/scripts/test_installed.py" ${CHECK_OPTION:+"$CHECK_OPTION"} --package rexgraph -- "$REPO_DIR/rexgraph/tests" -q
+    INENV python -I "$REPO_DIR/rexgraph/tests/_support/test_installed.py" ${CHECK_OPTION:+"$CHECK_OPTION"} --package rexgraph -- "$REPO_DIR/rexgraph/tests" -q
 fi
 if [ "$RUN_AGENT_TESTS" = 1 ]; then
-    INENV python -I "$REPO_DIR/scripts/test_installed.py" ${CHECK_OPTION:+"$CHECK_OPTION"} \
+    INENV python -I "$REPO_DIR/rexgraph/tests/_support/test_installed.py" ${CHECK_OPTION:+"$CHECK_OPTION"} \
         --package rexgraph --package agent --package rcdb -- "$REPO_DIR/agent/tests" -q
 fi
 say "Installation complete."
 printf 'Python: %s/bin/python\n' "$VENV_DIR"
-printf 'Verify: %s/bin/python -I %s/scripts/verify_install.py --profile %s\n' "$VENV_DIR" "$REPO_DIR" "$PROFILE"
+printf 'Verify: %s/bin/python -I %s/agent/install/verify_install.py --profile %s\n' "$VENV_DIR" "$REPO_DIR" "$PROFILE"
 if [ "$PROFILE" != core ]; then
     printf 'Agent: make -C "%s" serve VENV_DIR="%s"\n' "$REPO_DIR" "$VENV_DIR"
     printf 'System: make -C "%s" system VENV_DIR="%s"\n' "$REPO_DIR" "$VENV_DIR"

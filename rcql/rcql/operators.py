@@ -1545,3 +1545,20 @@ _install_recursion_operators(register)
 
 from .transformation_operators import install as _install_transformation_operators
 _install_transformation_operators(register)
+
+def _install_algebraic_operators(register):
+    from .algebraic_operators import install
+
+    install(register)
+
+
+_install_algebraic_operators(register)
+
+
+def _install_phase_fold_operators(register):
+    from .phase_fold_operators import install
+
+    install(register)
+
+
+_install_phase_fold_operators(register)

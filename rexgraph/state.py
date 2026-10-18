@@ -25,6 +25,10 @@ import numpy as np
 
 from rexgraph.identity import TENSOR_DIGEST_ALGO, tensor_digest
 from rexgraph.exact_value import validate_exact_array
+try:
+    from rexgraph.core._state import encode_exact_coefficients as _encode_exact_kernel
+except ImportError:
+    _encode_exact_kernel = None
 
 #: The codec spec rides as a tensor so the container digest covers it; see `to_state`.
 CODEC_TENSOR = "codec_spec"
@@ -213,6 +217,8 @@ def _encode_exact(a):
     The shape lives in the sealed codec spec. Tags preserve int versus Fraction,
     including a Fraction with denominator one; no float conversion is involved.
     """
+    if _encode_exact_kernel is not None:
+        return _encode_exact_kernel(a)
     pieces = []
     for value in validate_exact_array(a).flat:
         if isinstance(value, Fraction):

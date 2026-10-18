@@ -73,6 +73,6 @@ def test_live_path_imports_no_pandas():
     """)
     from pathlib import Path
     from runpy import run_path
-    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
     r = run_isolated(code, packages=("agent", "rexgraph", "rcdb"), capture_output=True, text=True)
     assert r.returncode == 0, f"live-path import pulled in pandas or failed:\n{r.stdout}\n{r.stderr}"

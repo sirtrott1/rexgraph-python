@@ -1,9 +1,13 @@
 # RexGraph System
 
-System is a browser application for inspecting registered complexes, datasets,
-file catalogs and RCDB stores. It executes queries through RCQL and displays
-their results. Native result downloads preserve exact values and source
-provenance for use in another application.
+System opens registered complexes, datasets, file catalogs and RCDB stores in
+a browser. Its panels help inspect a source, and RCQL queries produce selections,
+measurements and fields from that source.
+
+The browser preview is bounded so a large result can still be inspected. When
+another application needs the full selection, field or exact value, download
+the native result: it carries the source references and maps omitted from a
+short preview.
 
 ## Installation
 

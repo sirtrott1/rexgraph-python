@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 
 def test_registered_dependency_path_reaches_the_isolated_child(monkeypatch, tmp_path):
-    helper = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'scripts/test_subprocess.py'))
+    helper = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'rexgraph/tests/_support/test_subprocess.py'))
     dependencies = tmp_path / 'site-packages'
     dependencies.mkdir()
     (dependencies / 'synthetic_dependency.py').write_text('value = 317\n')
@@ -18,7 +18,7 @@ def test_registered_dependency_path_reaches_the_isolated_child(monkeypatch, tmp_
 
 
 def test_wheel_probe_does_not_activate_an_ambient_editable_loader(monkeypatch, tmp_path):
-    helper = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'scripts/test_subprocess.py'))
+    helper = runpy.run_path(str(Path(__file__).resolve().parents[2] / 'rexgraph/tests/_support/test_subprocess.py'))
     dependency = tmp_path / 'site-packages'
     dependency.mkdir()
     package = dependency / 'rexgraph'

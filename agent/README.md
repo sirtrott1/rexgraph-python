@@ -1,8 +1,13 @@
 # RexGraph Agent
 
-Agent provides the application server, analysis pipeline, worker orchestration,
-data connectors and model tools for RexGraph. It depends on Core and RCDB.
-Workers can be Python callables or services with an OpenAI compatible endpoint.
+Agent brings data into RexGraph, runs analysis and connects the result to
+application workers. A reader constructs the relationships, Core computes on
+them, and RCDB stores the selected state. Agent supplies the server, pipeline,
+connectors and worker lifecycle around those operations.
+
+A worker can analyze, transform, score or generate; it can be a Python callable
+or a service with an OpenAI compatible endpoint. A language model is one kind
+of worker. The analysis and callable examples below run without model weights.
 
 ## Installation
 
@@ -47,8 +52,9 @@ print(result["hodge"]["dim_H"])
 The pipeline reports Hodge components and structural channel measurements.
 Hodge decomposition separates gradient flow from vertex potentials, curl flow
 supported by face boundaries, and harmonic flow in the Hodge operator's kernel.
-The relationships and signal being analyzed determine how these measurements
-are interpreted in an application.
+For this unfilled cycle the harmonic dimension is one. A different adapter can
+construct different relations from the same file, so inspect that construction
+before assigning an application meaning to the measurements.
 
 `agent.auto.auto_rex` accepts edge tables, JSON, NumPy arrays, DataFrames and
 text. The selected adapter determines which relationships are constructed from the

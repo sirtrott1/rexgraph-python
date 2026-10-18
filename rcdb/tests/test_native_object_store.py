@@ -341,7 +341,7 @@ def test_invalid_queries_refuse_on_empty_state(uri, bounds):
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX file object publication qualification")
 def test_fresh_process_file_writers_share_one_version_axis(tmp_path):
-    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
     uri = "file://"+str(tmp_path / "process")
     code = f"""
 from rcdb import NativeObjectStore
@@ -362,7 +362,7 @@ finally: s.close()
 @pytest.mark.skipif(os.name != "posix", reason="POSIX file object publication qualification")
 @pytest.mark.parametrize("when", ["before", "after"])
 def test_abrupt_process_exit_at_the_head_preserves_a_complete_publication(tmp_path, when):
-    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
     uri = "file://"+str(tmp_path / "abrupt")
     with closing(NativeObjectStore(uri)) as store: identity = store.store_id
     code = f"""

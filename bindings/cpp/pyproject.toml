@@ -1,0 +1,20 @@
+[build-system]
+requires = ["scikit-build-core>=1.0", "cython>=3.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "rexgraph-cpp-bindings"
+version = "0.1.0"
+description = "Python bindings for exact rexgraph-cpp source and field execution"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{name = "RexGraph"}]
+requires-python = ">=3.10"
+
+[tool.scikit-build]
+wheel.packages = []
+build.tool-args = ["-j1"]
+
+[tool.scikit-build.sdist.force-include]
+"../../rexgraph_cpp" = "rexgraph_cpp"

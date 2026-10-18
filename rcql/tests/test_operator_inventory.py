@@ -348,7 +348,8 @@ def test_signature_requirements_preserve_the_previous_effective_permissions():
     reused = NATIVE_CASES.keys() | TEMPORAL_CASES.keys() | {"EXPORT_PARQUET"}
     assert {name for name in catalogued() & reused if lookup(name).memoizable} == (
         reused - {"STATE_HASH", "SHOW_OPERATORS", "APPLY_DELTA", "REPLICATE",
-                  "PROGRAM_RUN", "PROGRAM_READ"}
+                  "PROGRAM_RUN", "PROGRAM_READ", "MODEL_LOCAL", "MODEL_EXTEND", "MODEL_COMPLETE",
+                  "MODEL_FINITE_COMPLETE", "MODEL_FINITE_BRANCHES"}
     )
 
 
@@ -489,7 +490,7 @@ def test_structural_inventory_import_does_not_load_numeric_stack():
     import os
     from pathlib import Path
     from runpy import run_path
-    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+    run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     code = (

@@ -1,8 +1,15 @@
 # RexGraph cochain models
 
-These numerical PyTorch models store trainable values on the cells of a
-relational complex. Their Green optimizer propagates parameter updates through
-the declared cell structure. They are included in the Core package.
+A label observed on one relation can inform nearby relations that share its
+participants. These PyTorch models put trainable values on the cells of a
+complex and use a Green operator to propagate parameter updates through that
+structure. The example below keeps a separate mask for observed labels, so
+propagation can update a row whose label did not enter the loss.
+
+This is the numerical cochain model family included in Core. Exact native
+whole field programs use a separate [model interface](../README.md#exact-native-models)
+with source, map and alternative family declarations. Choose the model family
+before choosing an optimizer or checkpoint format.
 
 ## Installation
 

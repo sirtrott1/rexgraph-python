@@ -22,7 +22,7 @@ def load_module(name, path):
 
 @pytest.fixture
 def setup():
-    return load_module("gpu_setup_test", ROOT / "scripts/setup_gpu.py")
+    return load_module("gpu_setup_test", ROOT / "agent/install/setup_gpu.py")
 
 
 @pytest.fixture

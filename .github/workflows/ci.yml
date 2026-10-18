@@ -166,7 +166,7 @@ jobs:
 
       - name: native actions work with SciPy disabled
         working-directory: ${{ runner.temp }}
-        run: '"$RUNNER_TEMP/fresh/bin/python" -I "$GITHUB_WORKSPACE/scripts/smoke_no_scipy.py" --require-absent'
+        run: '"$RUNNER_TEMP/fresh/bin/python" -I "$GITHUB_WORKSPACE/rcql/tests/smoke_no_scipy.py" --require-absent'
 
       # every extra must RESOLVE. An extra that names a distribution nobody can install,
       # or that omits one the code imports, is only visible from an empty environment.

@@ -9,7 +9,7 @@ import pytest
 from rcdb import SQLStore
 
 sa = pytest.importorskip("sqlalchemy")
-run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "scripts/test_subprocess.py"))["run_isolated"]
+run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
 
 
 @pytest.fixture(params=["file", "memory"])

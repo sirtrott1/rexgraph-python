@@ -997,22 +997,18 @@ def _column_integer_form(M: sp.spmatrix, atol: float = 1e-9):
 
 
 def _sparse_rank(M: sp.spmatrix, tol: float = 1e-9, *, exact: bool = False) -> int:
-    """Rank of a sparse matrix. Betti calculations use the resulting boundary ranks.
+    """Return a boundary rank using exact reduction where supported.
 
-    For INTEGER boundary maps (the unweighted topology) rank is computed EXACTLY and
-    EIGEN FREE by rational column reduction (:func:`_exact_rank_reduction`), using
-    integer column elimination: no SVD, no dense operator. Only genuinely
-    non integer (float weighted) matrices fall back to the dense/truncated SVD.
+    Integer entries use integer column elimination. Pairwise incidence and mixed
+    maps whose pair columns span the branching columns can use combinatorial
+    rank identities. Literal canonical C1 shares can be cleared to integer
+    columns without changing rank. These paths avoid a spectral threshold.
 
-    A pairwise boundary map takes the combinatorial identity first
-    (:func:`_pairwise_rank`), and a MIXED map whose pairs span its branching columns
-    takes the same identity through :func:`_spanned_branching_rank`. Both are the same
-    exact integer by a cheaper route, and both refuse rather than guess.
-
-    ``exact=True`` disables numerical rank estimation and accepts only canonical
-    sparse storage of integers or literal canonical C1 shares. Unsupported inputs
-    are refused, not rounded into an exact claim.
-    """
+    ``exact=True`` accepts only supported canonical sparse inputs and refuses
+    numerical estimation. With the default setting, inputs that cannot be
+    certified by those paths can use numerical SVD with ``tol``. Betti
+    calculations therefore need the boundary's arithmetic declaration as well
+    as its shape."""
     if np.iscomplexobj(M.data) or not np.all(np.isfinite(M.data)):
         raise ValueError("rank requires finite real entries; exact complex rank is unsupported")
     if exact and not getattr(M, 'has_canonical_format', False):

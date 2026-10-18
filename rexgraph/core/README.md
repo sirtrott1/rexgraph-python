@@ -82,3 +82,8 @@ The runner checks which installed packages supply the runtime modules. Optional
 feature and hardware tests report their skip reasons. See the
 [dependency guide](../../DEPENDENCIES.md#test-coverage-and-skipped-cases) for the
 full development profile and external requirements.
+
+For optional exact native models, see the
+[Core model guide](../README.md#exact-native-models). Those models use the C++
+provider through `rexgraph_cpp`; they are separate from the Cython kernel API
+and its numerical dtype and memory contracts.

@@ -73,7 +73,7 @@ preview. Large integers use decimal text records, and absence and approximation
 have distinct tags. Parquet export preserves exact coefficient columns and
 partition lineage.
 
-New query cache entries store the same `Result.to_bytes()` payload used for
+Query cache writers store the same `Result.to_bytes()` payload used for
 downloads. Cache identity includes the implementation and declared input
 identities; reuse checks dependency bindings before returning a result. Older
 cache manifests retain a read compatibility path. Portable result framing and

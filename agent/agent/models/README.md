@@ -1,10 +1,15 @@
 # Agent models
 
-The model builder assembles MLP, CNN, language and hypergraph models from
-`rexgraph.nn` components. It supports single runs, staged training and model
-fusion. These feature models use Adam through `make_optimizer("auto")`.
-Core's [cochain models](../../../rexgraph/flow/README.md) use cell parameters
-and their own Green optimizer contract.
+The model builder starts from a data kind: tabular features, images, token
+sequences or a hypergraph. It assembles the corresponding `rexgraph.nn` model
+and supports single runs, staged training and fusion. Use the synthetic example
+below to check the selected archetype before supplying application data.
+
+These feature models use Adam through `make_optimizer("auto")`. Core's
+[cochain models](../../../rexgraph/flow/README.md) put parameters on cells and
+use their own Green optimizer. [Exact native models](../../../rexgraph/README.md#exact-native-models)
+retain whole field programs and source declarations through a separate provider.
+Their checkpoints and training interfaces are not interchangeable.
 
 ## Installation
 

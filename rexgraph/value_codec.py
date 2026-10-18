@@ -9,6 +9,7 @@ from fractions import Fraction
 from math import prod
 from numbers import Integral
 import struct
+import sys
 
 import numpy as np
 
@@ -19,6 +20,9 @@ from .value import Absent, Approx, ExactTime, TimeRange
 __all__ = ["pack_value", "unpack_value", "pack_spec", "unpack_spec"]
 _MAGIC = b"RGVL\x01"
 _DEPTH = 64
+_storage = sys.modules.get("rexgraph_cpp._model_storage")
+_native_pack = getattr(_storage, "pack_native_value", None)
+_native_unpack = getattr(_storage, "unpack_native_value", None)
 
 
 def _blob(raw):
@@ -180,10 +184,14 @@ def _decode(c, depth):
 
 
 def pack_value(value) -> bytes:
+    if _native_pack is not None:
+        return _native_pack(value)
     return _MAGIC + _encode(value, 0)
 
 
 def unpack_value(data: bytes):
+    if _native_unpack is not None:
+        return _native_unpack(data)
     c = Cursor(data)
     if c.take(len(_MAGIC)) != _MAGIC:
         raise ValueError("unsupported native value format")

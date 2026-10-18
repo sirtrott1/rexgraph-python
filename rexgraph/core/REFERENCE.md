@@ -89,18 +89,20 @@ Exception hierarchy:
 
 ### Memory management
 
-The library enforces three memory ceilings, auto detected from system RAM at
-import time and reconfigurable at runtime:
+The configuration exposes three allocation limits, auto detected from system
+RAM and reconfigurable at runtime. They guide the checks that use them; they
+do not track all live allocations, external library workspaces or process RSS.
+Several individually accepted allocations can therefore exceed one limit in
+aggregate.
 
-- `max_parallel_buffer_bytes` (default: 25% of system RAM): per operation
-  scratch for parallel loops
-- `max_total_allocation_bytes` (default: 75% of system RAM): global allocation
-  ceiling
-- `max_dense_allocation_bytes` (default: 25% of RAM, clamped between 100 MB and 4 GB)
-  - single dense matrix ceiling, controls whether Laplacian construction uses
-  dense BLAS (dgemm) or sparse scipy
+- `max_parallel_buffer_bytes` (default: 25% of system RAM, subject to the
+  absolute parallel buffer cap): scratch admitted for a parallel operation
+- `max_total_allocation_bytes` (default: 75% of system RAM): a configured bound
+  available to allocation checks, without an aggregate allocator counter
+- `max_dense_allocation_bytes` (default: 25% of RAM, clamped between 100 MiB
+  and 4 GiB): a bound on a requested dense matrix
 
-These limits are checked by inline helpers that every module calls:
+Inline helpers make specific decisions from these settings:
 
 - `can_allocate_dense_f64(nrows, ncols)`: True if nrows x ncols x 8 bytes fits
   within the limit
@@ -2498,9 +2500,11 @@ spectral energy measurements use the eigenbasis.
 
 - `wave_evolve(F0, evals, evecs, freqs, t)` -> (Ft, dFdt)
 
-  Exact spectral wave evolution: d^2F/dt^2 = -M F with F(0) = F0,
-  dF/dt(0) = 0. Solution: F(t) = sum_k c_k cos(omega_k t) v_k. Returns
-  both position and velocity at time t.
+  Dense numerical spectral reference for d^2F/dt^2 = -M F with
+  F(0) = F0 and dF/dt(0) = 0. Nonnegative eigenvalues contribute
+  c_k cos(sqrt(lambda_k) t) v_k; negative eigenvalues use cosh with
+  sqrt(-lambda_k). Returns position and velocity using floating arithmetic.
+  `freqs` is a legacy descriptor; the evolution derives rates from `evals`.
 
 - `wave_evolve_trajectory(F0, evals, evecs, freqs, times)` -> (traj, vel)
 

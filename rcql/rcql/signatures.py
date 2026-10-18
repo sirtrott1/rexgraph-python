@@ -1646,3 +1646,20 @@ _install_recursion_signatures(register, OperatorSignature, TypePattern)
 
 from .transformation_contracts import install as _install_transformation_signatures
 _install_transformation_signatures(register, OperatorSignature, TypePattern)
+
+def _install_algebraic_signatures(register):
+    from .algebraic_operators import install_signatures
+
+    install_signatures(register)
+
+
+_install_algebraic_signatures(register)
+
+
+def _install_phase_fold_signatures(register):
+    from .phase_fold_operators import install_signatures
+
+    install_signatures(register)
+
+
+_install_phase_fold_signatures(register)

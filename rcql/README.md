@@ -1,9 +1,14 @@
 # RCQL
 
-RCQL is a typed query language for relational complexes and registered data
-sources. It evaluates construction, analysis, selection and operator expressions
-through RexGraph, and provides explicit mutations for RCDB records. Queries
-retain source identities, arithmetic declarations and execution provenance.
+RCQL lets an application ask questions of a complex without discarding the
+cell identities and bases needed to interpret the answer. A query can select
+relations, measure homology or apply a typed operator through RexGraph. Results
+carry their source references, arithmetic declarations and execution provenance
+so they can be inspected or saved beyond the current query.
+
+The application registers the available sources. Query text resolves those
+names, and explicit mutation expressions publish changes through RCDB. Selecting
+rows and changing the stored complex are separate operations.
 
 ## Installation
 

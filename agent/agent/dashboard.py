@@ -1,12 +1,12 @@
-"""agent.dashboard: the whole hive network as a live statistics snapshot.
+"""Collect the hive's current roster, coordination readings and message flow.
 
-Assembles every signal we already compute into one structured dashboard: the roster, the
-coordination health (deadlocks, the Hodge split, per worker load/coherence/curvature/alignment), the
-networks the LMs forged, and, crucially, how information MOVES. Information propagation is signal
-exchange on the tensor field of the hive: the directed message flow (who -> whom, how much) plus the
-Hodge reading of it (is work draining, or circulating in a stuck loop). `hive_dashboard()` returns
-the data; `render()` prints terminal panels; the server route serves it live.
-"""
+``hive_dashboard`` combines the monitor and status reports with the foundry's
+worker hierarchy. It adds flow measurements when coordination edges are
+available; a failed flow analysis leaves those optional readings empty.
+``render`` formats the snapshot for a terminal, and the server can return the
+same data to a client. Hodge components describe the recorded interaction
+complex; interpreting a circulating component as stalled work requires the
+application's routing and activity context."""
 from __future__ import annotations
 
 from typing import Any
@@ -19,7 +19,7 @@ def hive_dashboard(hive) -> dict[str, Any]:
     from .foundry import hierarchy
     hier = hierarchy(hive)
 
-    # information flow health: the directed coordination edges, read by the same Hodge machinery
+    # Flow analysis is optional; the roster and monitor readings remain available if it fails.
     edges = m.get("edges", []) or []
     flow: dict[str, Any] = {}
     if edges:

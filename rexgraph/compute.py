@@ -143,16 +143,11 @@ def get_default_backend() -> str | None:
     return _DEFAULT_BACKEND
 
 
-#### host aware auto backend (lazy, cached, never hardcoded)
-# When no backend is explicitly requested (no `prefer`, no default set, no config), dispatch
-# resolves the preferred backend DYNAMICALLY for THIS host via rexgraph._env.recommend_backend()
-# instead of assuming one machine's GPU. The _env recommendation (cuda/rocm/vulkan/metal/cpu) is
-# mapped onto a registered backend name; ROCm reuses the 'cuda' backend (torch/cupy share the
-# namespace), Metal maps to 'mps'. A recommendation is used only if that backend is registered AND
-# available AND the op implements it: otherwise dispatch falls through to best_backend()/cpu, so
-# a recommended GPU without a working runtime never breaks a call. The REXGRAPH_BACKEND env var
-# (honored inside recommend_backend) wins over auto detection; an explicit set_default_backend /
-# apply_config wins over both.
+# Host recommendations are considered after explicit preferences and defaults.
+# A recommendation must name a registered, available backend that implements the
+# operation. Otherwise dispatch continues to best_backend()/cpu. ROCm shares the
+# cuda namespace; Metal maps to mps. REXGRAPH_BACKEND overrides host detection,
+# while set_default_backend/apply_config take precedence over the recommendation.
 
 # _env names -> registered compute backend names
 _BACKEND_ALIAS: dict[str, str] = {
@@ -164,10 +159,11 @@ _DETECTED = None           # cached detect_compute_backends() result (detection 
 
 
 def _env_module():
-    """Import rexgraph._env best effort. Tries the normal import first (works under the test
-    conftest / a full install), then falls back to loading _env.py by file path from beside this
-    module (robust for the editable install, where new pure Python files are not in the finder's
-    map). Returns the module or None. Never raises."""
+    """Load the host recommendation module, returning None if loading fails.
+
+    Try the package import first, then the adjacent ``_env.py`` file. The file
+    fallback handles editable installations whose finder has not indexed a new
+    Python module. Cache the attempt so dispatch does not repeat failed imports."""
     global _ENV_MOD, _ENV_TRIED
     if _ENV_TRIED:
         return _ENV_MOD

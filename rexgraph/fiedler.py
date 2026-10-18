@@ -256,27 +256,25 @@ def solve_block_width(nV, nE, *, panels=6):
             check_dense_allocation("leverage_diagonal block", tall, width)
             return width
         except CoreMemoryLimitError:
-            # the limit is the only thing being probed. Catching wider would turn a
-            # fault inside the check into a silent halving to width 1, which reads as a
-            # small memory budget and costs 512 times the solves.
+            # Only a memory refusal should reduce the width. Other failures must
+            # propagate so a faulty check cannot silently multiply the solve count.
             width //= 2
     return 1
 
 
 def leverage_diagonal(B, *, columns=None, kernel=None, block=None,
                       tol=1e-12, maxit=500):
-    """`diag(B^T (B B^T)^+ B)` over `columns`, matrix free and blocked.
+    """Compute numerical diag(B.T (B B.T)^+ B) for selected columns.
 
-    This is one object under two names. As a projector it is the LEVERAGE of each column
-    on the row space of `B`; as a solve it is the effective resistance `b^T L_0^+ b` of
-    each relation. `_effective_resistance_batch` and `partition._leverage_of` were running
-    the same solve with different blocking (none, and 512), which is why one of them fell
-    over. They both come here now.
+    Blocked minimum norm solves give each column's leverage in the row space
+    without forming the Gram matrix or projector. ``tol`` and ``maxit`` control
+    the numerical solves; ``block`` controls their working width.
 
-    `L_0` is never formed and neither is the projector. Returns `(values, rank)` with the
-    rank read off Foster's identity, the sum of the leverage over ALL columns, so it is
-    only the complex's rank when `columns` is every column.
-    """
+    Returns ``(values, rank)``. The deflated path rounds the sum of returned
+    leverage values, which represents the rank only when every column is selected.
+    The general kernel fallback uses an exact full matrix rank when that reduction
+    is supported, otherwise the rounded sum. Use a boundary rank API when a
+    separate certified rank is required."""
     import scipy.sparse as sp
 
     from rexgraph.sparse_character import _block_cg
@@ -317,28 +315,22 @@ def leverage_diagonal(B, *, columns=None, kernel=None, block=None,
 
 def leverage_sketch(B, *, dim=None, epsilon=0.1, seed=0, tol=1e-10, maxit=500,
                     kernel=None):
-    """The leverage field in O(log nE) solves instead of one per relation.
+    """Estimate the leverage diagonal with a seeded random projection.
 
-    The exact reading is a projector DIAGONAL, and a diagonal costs a solve per column
-    because each entry asks about a different direction. But the same field is a set of
-    squared LENGTHS,
+    For L = B B.T, b_c.T L^+ b_c = ||B.T L^+ b_c||^2. Projecting those vectors
+    onto ``dim`` random directions lets all column lengths be estimated with
+    ``dim`` right hand sides, reducing the solve count when dim is below nE.
+    The Rademacher projection is reproducible for a fixed ``seed``.
 
-        R_eff(c) = b_c^T L^+ b_c = || B^T L^+ b_c ||^2   (since L^+ L L^+ = L^+)
+    This is an explicitly approximate numerical reading. The default dimension
+    uses ceil(8 log(max(nE, 2)) / epsilon^2), capped at nE; a supplied ``dim``
+    overtrides that choice. Random projection error and solver tolerance both
+    affect the result. The routine does not certify an error bound for a run.
+    If the dimension reaches nE, it uses ``leverage_diagonal`` instead.
 
-    and squared lengths survive a random projection. So project the nE dimensional side
-    down to `dim` rows once, solve for THOSE, and every relation's share is read off as a
-    column norm. The solve count stops depending on the number of relations, which is the
-    part that made the exact form unusable on a corpus: 27,192 solves become ~100.
-
-    What is given up is exactness, and it is given up in a stated way rather than
-    silently: Johnson Lindenstrauss puts every entry within a factor `1 +/- epsilon` with
-    high probability, and `dim` follows from `epsilon` rather than being tuned. Foster's
-    identity still holds in expectation but no longer to the last bit, so a caller that
-    needs the sum to close exactly wants `leverage_diagonal`.
-
-    Returns `(values, rank_estimate)`. `seed` fixes the projection so a reading is
-    reproducible; two different seeds are two samples of the same field, not two fields.
-    """
+    Returns ``(values, rank_estimate)``. Rounding the estimated trace does not
+    certify an integer rank. Request the unsketched diagonal for individual
+    numerical leverage readings, or use the exact rank API for boundary rank."""
     import scipy.sparse as sp
 
     from rexgraph.sparse_character import _block_cg
@@ -349,11 +341,11 @@ def leverage_sketch(B, *, dim=None, epsilon=0.1, seed=0, tol=1e-10, maxit=500,
         return np.zeros(nE, dtype=np.float64), 0
     k = int(dim) if dim else max(1, min(nE, int(np.ceil(8.0 * np.log(max(nE, 2))
                                                         / float(epsilon) ** 2))))
-    if k >= nE:                      # the projection would cost more than the truth
+    if k >= nE:                      # sketching no longer reduces the solve count
         return leverage_diagonal(Bc, kernel=kernel, tol=tol, maxit=maxit)
 
     rng = np.random.default_rng(int(seed))
-    # +/-1 Rademacher, which is the cheap JL family and needs no dense normal draw
+    # Rademacher signs give the projection without drawing a Gaussian matrix.
     Q = rng.integers(0, 2, size=(nE, k)).astype(np.float64) * 2.0 - 1.0
     Q /= np.sqrt(k)
     Y = np.ascontiguousarray(Bc @ Q)                      # nV x k, the only dense panel

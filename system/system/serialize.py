@@ -1,23 +1,24 @@
 """JSON values returned by the System API."""
 from __future__ import annotations
 
-from dataclasses import fields, is_dataclass
+from collections.abc import Mapping
+from dataclasses import fields as dataclass_fields, is_dataclass
 from decimal import Decimal
 from fractions import Fraction
 from math import isfinite
 from typing import Any
 
 import numpy as np
-from rexgraph.exact_array import ExactArray
-from rexgraph.value import Absent, Approx, ExactTime, TimeRange
 from rcql.capabilities import SourcePolicy
 from rexgraph.channel_operator import ChannelOperator
 from rexgraph.cochain import Chain, Cochain, Field
+from rexgraph.exact_array import ExactArray
 from rexgraph.graph import RexGraph, TemporalRex
 from rexgraph.green import GreenOperator
 from rexgraph.linear_operator import RexOperator
 from rexgraph.operator_bracket import GradedOperatorBracket, OperatorBracket
 from rexgraph.sheaf import ExactGlueResult, ExactSectionCheck
+from rexgraph.value import Absent, Approx, ExactTime, TimeRange
 from rexgraph.weighted_dirac import GradedChain, WeightedDiracOperator
 
 
@@ -100,8 +101,23 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
                 "imaginary": json_value(value.imag, max_values=max_values)}
     if isinstance(value, np.ndarray):
         return _array(value, max_values)
-    from rexgraph.selection import Selection, Lineage
+    import sys
+    native = sys.modules.get("rexgraph_cpp")
+    if native is not None:
+        native_types = tuple(getattr(native, name) for name in
+                             ("NativeAlgebraicArchive", "NativeAlgebraicArchiveGraph", "NativeAlgebraicValue",
+                              "NativeAlgebraicGraphRevision", "NativeAlgebraicGraphDatabase",
+                              "NativeAlgebraicGradeTensor", "NativeAlgebraicGradeTensorWindow", "NativeAlgebraicMetricValues",
+                              "NativeAlgebraicSnapshot", "NativeAlgebraicRecord", "NativeAlgebraicTensorWindow",
+                              "PreparedAlgebraicQuery", "NativeAlgebraicQueryResult", "NativePhaseFoldArchive") if hasattr(native, name))
+        if isinstance(value, native_types):
+            details = value.preview(max_values)
+            if "kind" in details:
+                details["value_kind"] = details.pop("kind")
+            return {"kind": type(value).__name__,
+                    **json_value(details, max_values=max_values)}
     from rexgraph.partition_state import RexPartition
+    from rexgraph.selection import Lineage, Selection
     if isinstance(value, Selection):
         value.check_state()
         return {"kind": "Selection", "digest": value.digest, "source_state": value.source_state,
@@ -122,9 +138,8 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
                 "state": value.manifest, "digest": value.digest,
                 "cell_maps": _cell_inventory(value.cell_maps, max_values),
                 "lineage": json_value(value.lineage, max_values=max_values) if value.source_sizes else None}
-    from rexgraph.model_state import ModelState, ModelOutput, ModelBatch, ModelTimeline, ModelInput
+    from rexgraph.model_state import ModelBatch, ModelInput, ModelOutput, ModelState, ModelTimeline
     if isinstance(value, (ModelState, ModelOutput, ModelBatch, ModelTimeline, ModelInput)):
-        value.check_state()
         out = {"kind": type(value).__name__, "digest": value.coefficient_digest}
         if isinstance(value, ModelTimeline):
             out.update(count=len(value.times), times=json_value(value.times[:max_values], max_values=max_values),
@@ -150,6 +165,236 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
                                    for name, v in list(parameters.items())[:max_values]
                                    if isinstance(v, np.ndarray)],
                        parameters_truncated=len(parameters) > max_values)
+            if value.adapter == "cpp_relation_response":
+                counts = {label: len(entries) for label, entries in value.payload["fields"].items()}
+                out.update(operation="green", input_grade=1, trainable=True,
+                           resumable=True,
+                           learned_field_entries=counts, parameter_count=sum(counts.values()),
+                           relation_count=len(value.space.keys),
+                           metrics="declared-unit-stalk-metrics", learned_transports=False)
+                if value.adapter_version == "2":
+                    out.update(role_transports=json_value(value.configuration["role_transports"], max_values=max_values))
+            elif value.adapter == "cpp_relational_finite_operator":
+                out.update(operation="native-available-finite-operator",trainable=False,resumable=False,
+                           operator_sha256=value.configuration["operator_sha256"],operator_bytes=len(value.payload["operator_archive"]),
+                           operator_key=value.configuration["key"],revision=value.configuration["revision"],
+                           relationship_status=value.configuration["status"],reference_digest=value.configuration["reference_digest"],
+                           parameter_storage="immutable-native-operator-and-original-checkpoint",retains_whole_fields=True,
+                           retains_correlated_families=True,availability="independent-native-context-required",
+                           operations=["create","prepare","infer"],context_operations=["create","prepare","infer"])
+            elif value.adapter == "cpp_relational_literal_finite_field":
+                out.update(operation="native-available-literal-finite-reader", trainable=False, resumable=False,
+                           map_sha256=value.configuration["map_sha256"], reader_sha256=value.configuration["reader_sha256"],
+                           base_digest=value.configuration["base_digest"], map_bytes=len(value.payload["map_archive"]),
+                           parameter_storage="complete-native-reader-and-target-checkpoints", retains_whole_fields=True,
+                           retains_correlated_families=True, availability="independent-native-context-required",
+                           operations=["create","prepare","infer"], context_operations=["create","prepare","infer"])
+            elif value.adapter == "cpp_relational_finite_field":
+                out.update(operation="native-available-finite-map-instance",trainable=False,resumable=False,
+                           map_sha256=value.configuration["map_sha256"],map_bytes=len(value.payload["map_archive"]),
+                           map_key=value.configuration["key"],revision=value.configuration["revision"],
+                           relationship_status=value.configuration["status"],target_count=len(value.configuration["target_digests"]),
+                           target_digests=list(value.configuration["target_digests"]),
+                           parameter_storage="immutable-native-finite-map-and-target-checkpoints",retains_whole_fields=True,
+                           retains_correlated_families=True,availability="independent-native-context-required",
+                           operations=["create","prepare","infer"],context_operations=["create","prepare","infer"])
+            elif value.adapter == "cpp_conditioned_occurrence_program":
+                out.update(operation="native-conditioned-occurrence-field", trainable=True, resumable=True,
+                           source_backed=True, parameter_count=8, target_coordinates=24,
+                           observations=value.payload["observation_count"],
+                           parameter_storage="immutable-native-typed-evidence-and-literal-proof-history",
+                           retains_whole_fields=True, retains_correlated_families=True,
+                           availability="independent-native-context-required",
+                           operations=["create", "prepare", "infer", "train"],
+                           context_operations=["create", "prepare", "infer", "train"])
+            elif value.adapter == "cpp_conditioned_field_family":
+                out.update(operation="native-conditioned-joint-whole-field", trainable=False, resumable=True,
+                           source_backed=True, member_count=value.configuration["member_count"],
+                           parameter_storage="immutable-native-members-interfaces-and-complete-literal-proof-history",
+                           retains_whole_fields=True, retains_correlated_families=True,
+                           availability="independent-native-context-required", operations=["create", "prepare", "infer"],
+                           context_operations=["create", "prepare", "infer"])
+            elif value.adapter == "cpp_conditioned_field_program":
+                out.update(operation="native-conditioned-whole-field", trainable=True, resumable=True,
+                           source_backed=True, parameter_count=8, observations=len(value.payload["history"]),
+                           parameter_storage="immutable-native-evidence-and-complete-literal-proof-history",
+                           retains_whole_fields=True, retains_correlated_families=True,
+                           availability="independent-native-context-required",
+                           operations=["create", "prepare", "infer", "train"],
+                           context_operations=["create", "prepare", "infer", "train"])
+            elif value.adapter == "cpp_relational_field_program":
+                learned = value.adapter_version in {"3", "6"}
+                out.update(operation="native-relational-field-program", trainable=learned, resumable=learned,
+                           source_backed=value.adapter_version in {"2", "3", "4", "5", "6", "7"},
+                           program_key=value.configuration["key"], revision=value.configuration["revision"],
+                           program_sha256=value.configuration["program_sha256"],
+                           program_bytes=len(value.configuration["available_archive"] if value.adapter_version == "5"
+                                             else value.configuration["program_archive"]),
+                           parameter_storage="immutable-native-program-archive", retains_whole_fields=True,
+                           operations=["create", "prepare", "infer", "train"] if learned else ["create", "prepare", "infer"])
+                if learned:
+                    out.update(evidence_sha256=value.payload["evidence_sha256"], evidence_bytes=len(value.payload["evidence_archive"]),
+                               evidence_revision=value.payload["revision"], observations=value.payload["observation_count"],
+                               retains_correlated_families=True)
+                if value.adapter_version == "4":
+                    out.update(operation="native-fixed-whole-field-comparison", comparison_sha256=value.configuration["comparison_sha256"],
+                               comparison_grade=value.configuration["grade"], comparison_channel=value.configuration["channel"],
+                               comparison_node=value.configuration["node"], comparison_storage="immutable-native-forms-archive")
+                if value.adapter_version == "5":
+                    out.update(operation="native-available-whole-field-program", available_program_sha256=value.configuration["available_sha256"],
+                               availability="independent-native-context-required", context_operations=["create", "prepare", "infer"])
+                if value.adapter_version == "6":
+                    out.update(operation="native-available-whole-field-learning", original_publisher_count=value.payload["origin_count"],
+                               availability="independent-native-context-required", context_operations=["create", "prepare", "infer", "train"])
+                if value.adapter_version == "7":
+                    out.update(operation="native-faithful-source-extension",extension_sha256=value.payload["extension_sha256"],
+                               extension_key=value.configuration["extension_key"],extension_revision=value.configuration["extension_revision"],
+                               relationship_status=value.configuration["status"],input_source=json_value(value.configuration["source_reference"],max_values=max_values),
+                               availability="independent-native-context-required",context_operations=["create","prepare","infer"],
+                               retains_correlated_families=True)
+            elif value.adapter == "cpp_stalk_pattern_bank":
+                out["source"] = json_value(value.source.as_record(), max_values=max_values)
+                out.update(operation="joint-pattern-bank", trainable=False, resumable=False,
+                           learned_transports=True, retains_affine_family=True,
+                           parameter_storage="native-source-archive", parameter_count=None,
+                           pattern_count=len(value.space.keys), profile=value.configuration["profile"])
+            elif value.adapter == "cpp_channels":
+                out.update(operation="raw-relational-channels", trainable=False, input_grade=1,
+                           relation_count=len(value.space.keys), channels=["T", "G", "F", "C"], field_metric="unit",
+                           geometry="raw", coparticipation=value.configuration["coparticipation"],
+                           trace_normalized=value.configuration["trace_normalized"])
+            elif value.adapter == "cpp_local_sections":
+                out.update(operation="native-local-tensor-sections", trainable=True, resumable=True,
+                           learned_transports=False, local_stalk_count=len(value.space.keys),
+                           stalk_dimensions=[len(s["axes"]) for s in value.configuration["stalks"]],
+                           acquired_charts=len(value.payload["observations"]), retains_all_interpretations=True)
+            elif value.adapter == "cpp_stalk_fields":
+                out.update(operation="whole-stalk-green", input_grade=1, trainable=True, resumable=True,
+                           relation_count=len(value.space.keys),
+                           stalk_dimensions=list(map(len, value.configuration["upper_axes"])),
+                           acquired_columns=len(value.payload["observations"]), learned_transports=False,
+                           parameter_count=sum(len(o["values"]) for o in value.payload["observations"]))
+            elif value.adapter == "cpp_stalk_objective":
+                fit = value.payload["selection"]
+                out.update(operation="conditional-stalk-field-objective", trainable=True, resumable=True,
+                           evidence_rank=fit["evidence_fit"]["rank"], objective_rank=fit["rank"],
+                           conditional_directions=len(fit["free_columns"]), retains_evidence_family=True)
+            elif value.adapter == "cpp_stalk_transport":
+                fit = value.payload["fit"]
+                out.update(operation="affine-stalk-transport", trainable=True, resumable=True, learned_transports=True,
+                           input_grade=1, output_grade=0, parameter_count=len(fit["particular"]),
+                           identified_rank=fit["rank"], unidentified_directions=len(fit["free_columns"]),
+                           acquired_fields=value.step, retains_affine_family=True, parameter_relations=True,
+                           parameter_relation_query="whole-stalk-parameter-relations-query-v1",
+                           context_hypotheses=True, context_hypothesis_query="whole-stalk-context-hypotheses-query-v1",
+                           context_views=True, context_view_query="whole-stalk-context-views-query-v1",
+                           context_diagrams=True, context_diagram_query="whole-stalk-context-diagrams-query-v1",
+                           observation_groups=True, observation_group_profile="whole-stalk-transport-observation-group-v1")
+                if value.adapter_version in {"3", "4"}:
+                    out.update(observation_group_profile="column-stalk-transport-observation-group-v1",
+                        input_storage="original-column-tensors",target_storage="encoded-original-stalk-targets-v1")
+                if value.adapter_version in {"2", "4"}:
+                    out.update(parameter_space=json_value(value.configuration["parameter_space"],max_values=max_values),
+                               basis_rank=fit["basis_rank"],supported_map_entries=len(value.configuration["parameter_slots"]))
+            elif value.adapter == "cpp_graded_stalk_transport":
+                c = value.configuration; fit = value.payload["fit"]["fit"]
+                out.update(operation="graded-affine-stalk-transport",trainable=True,resumable=True,learned_transports=True,
+                           input_grade=c["grade"],output_grade=c["grade"]-1,strict_chain_family=True,
+                           parameter_count=len(fit["particular"]),identified_rank=fit["rank"],chain_rank=fit["chain_rank"],
+                           observation_rank=fit["observation_rank"],unidentified_directions=len(fit["free_columns"]),
+                           acquired_fields=value.step,retains_affine_family=True)
+            elif value.adapter == "cpp_stalk_boundary":
+                c = value.configuration
+                out.update(operation="graded-stalk-boundary", trainable=True, resumable=True,
+                           input_grade=c["grade"], output_grade=c["grade"]-c["boundary_steps"],
+                           boundary_steps=c["boundary_steps"], strict_chain_family=True, learned_transports=False,
+                           grade_stalk_dimensions=[list(map(len,family)) for family in c["stalk_axes"]],
+                           acquired_columns=len(value.payload["observations"]),
+                           parameter_count=sum(len(o["values"]) for o in value.payload["observations"]))
+            elif value.adapter == "cpp_stalk_sections":
+                from rexgraph.cpp_stalk_sections import _states
+                sections, fields = _states(value)
+                out.update(operation="compatible-sections-whole-stalk-fields", trainable=True, resumable=True,
+                           layers=list(sections.configuration["layers"]), joint_states=len(sections.configuration["joint_values"]),
+                           acquired_columns=len(fields.payload["observations"]), interfaces=len(value.configuration["interfaces"]),
+                           retains_all_interpretations=True, learned_transports=False,
+                           parameter_count=sum(len(o["values"]) for o in fields.payload["observations"]))
+            elif value.adapter == "cpp_relational_sections":
+                counts = {label:len(entries) for label,entries in value.payload["fields"].items()}
+                out.update(operation="green-and-compatible-sections", input_grade=1, trainable=True,
+                           resumable=True,
+                           layers=list(value.configuration["layers"]), joint_states=len(value.configuration["joint_values"]),
+                           learned_compatibility_assertions=len(value.payload["compatibility_observations"]),
+                           learned_field_entries=counts, parameter_count=sum(counts.values()), learned_transports=value.adapter_version == "4")
+                if value.adapter_version in {"2", "3", "4"}:
+                    out.update(context_guard_profile="ordered-context-boundary-v1", automatic_guarded_links=True,
+                               guard_limits=list(value.configuration["guard_limits"]),
+                               context_guard_conditions=list(dict.fromkeys(o["guard"]["profile"]
+                                   for o in value.payload["compatibility_observations"])))
+                if value.adapter_version in {"3", "4"}:
+                    out.update(dictionary_links=json_value(value.configuration["dictionary_links"], max_values=max_values),
+                               acquired_dictionary_observations=len(value.payload["dictionary_observations"]))
+                if value.adapter_version == "4":
+                    out.update(role_transports=json_value(value.configuration["field"]["role_transports"], max_values=max_values),
+                               transport_candidates=len(value.configuration["transport_search"]["candidates"]),
+                               transport_fit=json_value(value.payload["transport_fit"], max_values=max_values))
+            elif value.adapter == "cpp_algebraic_grade":
+                layouts = value.configuration["layouts"]
+                out.update(operation="boundary", boundary_steps=value.configuration["boundary_steps"],
+                           input_grade=layouts[0]["grade"], output_grade=layouts[-1]["grade"],
+                           input_stalk_offsets=json_value(layouts[0]["stalk_offsets"], max_values=max_values),
+                           output_stalk_offsets=json_value(layouts[-1]["stalk_offsets"], max_values=max_values),
+                           field_degree=value.source.native.field_degree, coefficient_basis="power", trainable=False)
+            elif value.adapter == "cpp_algebraic_grade_metric":
+                c = value.configuration
+                layout = c["output_layout"]
+                out.update(operation=c["operation"], input_grade=c["layouts"][-1]["grade"],
+                           output_kind=c["output_kind"], output_grade=None if layout is None else layout["grade"],
+                           metric_keys=json_value(c["metric_keys"], max_values=max_values),
+                           max_retained_coordinates=c["max_retained_coordinates"],
+                           input_stalk_offsets=json_value(c["layouts"][-1]["stalk_offsets"], max_values=max_values),
+                           output_stalk_offsets=None if layout is None else json_value(layout["stalk_offsets"], max_values=max_values),
+                           field_degree=value.source.native.field_degree, coefficient_basis="power", trainable=False)
+            elif value.adapter == "cpp_algebraic":
+                out.update(operation=value.configuration["operation"],
+                           operator_key=value.configuration["operator_key"],
+                           field_degree=value.source.native.field_degree,
+                           coefficient_basis="power", trainable=False,
+                           input_carrier=dict(value.configuration["input_carrier"]),
+                           output_kind=value.configuration["output_kind"],
+                           output_carrier=json_value(value.configuration["output_carrier"], max_values=max_values))
+            elif value.adapter == "cpp_metric":
+                parameters = value.payload["parameters"]
+                out.update(resumable=True, parameter_count=len(parameters),
+                           parameters=json_value(parameters[:max_values], max_values=max_values),
+                           parameters_truncated=len(parameters) > max_values,
+                           objective=value.configuration["objective"],
+                           parameter_history_namespace=value.payload["history_namespace"],
+                           last_loss=json_value(value.payload["last_loss"], max_values=max_values))
+            elif value.adapter == "cpp_perceptron":
+                parameters = value.payload["parameters"]
+                preview = parameters[:max_values]
+                if isinstance(preview, np.ndarray):
+                    preview = preview.tolist()
+                out.update(resumable=True, parameter_count=len(parameters),
+                           parameters=json_value(preview, max_values=max_values),
+                           parameters_truncated=len(parameters) > max_values,
+                           feature_count=value.configuration["feature_count"],
+                           scalar_policy=value.configuration["scalar_policy"],
+                           mistakes=value.payload["mistakes"])
+            elif value.adapter == "cpp_integer":
+                layers = value.configuration["layers"]
+                parameters = tuple(v for layer in layers for v in (*layer["gains"], layer["bias"]))
+                out.update(parameter_count=len(parameters),
+                           parameters=json_value(parameters[:max_values], max_values=max_values),
+                           parameters_truncated=len(parameters) > max_values, layer_count=len(layers),
+                           scalar_policy=value.configuration["scalar_policy"],
+                           channel_profile=value.configuration["channel_profile"])
+            if value.adapter in {"cpp_field", "cpp_integer", "cpp_metric", "cpp_perceptron"} and "transport" in value.payload:
+                proof = value.payload["transport"]
+                out.update(transport={"profile": proof["profile"], "base_step": proof["base_step"],
+                                      "origin_model": proof["origin_digest"]},
+                           parameter_history_step=value.step-proof["base_step"])
         elif isinstance(value, ModelInput):
             out.update(arithmetic=value.arithmetic, origin_digest=value.origin_digest,
                        original_arithmetic=value.origin_arithmetic,
@@ -160,9 +405,91 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
                        grade=value.grade, variance=value.variance,
                        axes=[{"name": a.name, "size": len(a.keys)} for a in value.axes],
                        values=_array(value.values, max_values))
+            if value.method in {"algebraic-grade-stalk-v1", "algebraic-grade-metric-stalk-v1"}:
+                receipt = value.execution_receipt
+                out.update(original_cell=receipt["cell"], source_slice=list(receipt["source_slice"]),
+                           original_grade=value.grade,
+                           coefficient_basis="power", origin_output=receipt["origin_output"])
+                if value.method == "algebraic-grade-metric-stalk-v1":
+                    out.update(metric_operation=receipt["operation"], max_retained_coordinates=receipt["max_retained_coordinates"])
+            if value.execution_receipt is not None:
+                out["execution_receipt"] = json_value(value.execution_receipt, max_values=max_values)
+            if value.field_archive is not None:
+                archive = value.field_archive
+                carrier = "operator_sha256" if "operator_sha256" in archive else "map_sha256" if "map_sha256" in archive else "program_sha256"
+                out["field_archive"] = {"schema": archive["schema"], "bytes": len(archive["data"]),
+                                        "sha256": archive["sha256"], carrier: archive[carrier],
+                                        "engine_receipt": json_value(archive["engine_receipt"], max_values=max_values)}
+                out.update(value_storage="immutable-native-field-archive", retains_whole_fields=True,
+                           selection="explicit node and original stalk")
+                if value.method in {"exact-available-relational-finite-operator-family-v1", "exact-available-relational-finite-operator-evaluation-v1"}:
+                    out.update(selection="explicit operator choice, target node and original target stalk",
+                               retains_complete_alternatives=True,availability="independent-native-context-required",
+                               actual_input=json_value(value.execution_receipt["actual_input"],max_values=max_values))
+                if value.method in {"exact-available-relational-finite-field-family-v1", "exact-available-relational-finite-field-evaluation-v1"}:
+                    out.update(selection="explicit finite choice, target node and original target stalk",
+                               retains_complete_alternatives=True,availability="independent-native-context-required",
+                               target_count=len(value.execution_receipt["target_digests"]))
+                if value.method == "exact-available-relational-known-product-family-v1":
+                    out.update(retains_complete_alternatives=True, availability="independent-native-context-required",
+                               retains_original_source_lineage=bool(value.execution_receipt["teacher_grammar"]))
+                if value.method == "exact-available-relational-local-solve-v1":
+                    out.update(packet_context="complete-global-context",
+                               selection="explicit solved node and original stalk",
+                               retains_global_response=True,retains_interface_and_reconstruction=True)
+                out.pop("values")
+            if value.method == "exact-joint-stalk-pattern-bank-v1":
+                receipt = value.execution_receipt
+                out["source"] = json_value(value.source.as_record(), max_values=max_values)
+                out.update(operation=receipt["query_declaration"]["operation"],
+                           value_storage="execution-receipt", retains_affine_family=True)
+                out.pop("values")
+            if value.method == "native-local-tensor-sections-v1":
+                receipt = value.execution_receipt
+                out.update(case_count=len(value.space.keys), retains_all_interpretations=True,
+                           supported=json_value(receipt["supported"], max_values=max_values),
+                           assignments=json_value(receipt["assignments"], max_values=max_values))
+            if value.method == "exact-graded-stalk-boundary-v1":
+                trace = value.execution_receipt["trace"]
+                out.update(trace_grades=list(trace["grades"]),
+                           stalk_axes=json_value(trace["receipt"]["stalk_axes"], max_values=max_values),
+                           intermediate_channels=json_value(trace["intermediate_channels"], max_values=max_values))
+            if value.method == "compatible-sections-whole-stalk-fields-v1":
+                from rexgraph.cpp_stalk_sections import _states
+                from rexgraph.model_codec import unpack_model
+                receipt = value.execution_receipt
+                _, fields = _states(unpack_model(receipt["model_checkpoint"]))
+                out.update(case_count=len(value.space.keys), retains_all_interpretations=True,
+                           stalk_axes=json_value(fields.configuration["upper_axes"], max_values=max_values),
+                           assignments=json_value(receipt["assignments"], max_values=max_values),
+                           branch_assignments=json_value(receipt["branch_assignments"], max_values=max_values),
+                           interface_readings=json_value(receipt["interface_readings"], max_values=max_values))
         else:
-            out.update(targets=_array(value.targets, max_values), observed=_array(value.observed, max_values),
+            stored = (isinstance(value.inputs, Mapping)
+                      and isinstance(value.inputs.get("profile"), str)
+                      and value.inputs.get("profile") == "stored-native-training-samples-v1"
+                      and isinstance(value.inputs.get("samples"), tuple))
+            if isinstance(value.targets,Mapping):
+                if value.targets["profile"] == "rexgraph.relational-field-training-targets.v1":
+                    observations = value.targets["observations"]
+                    targets = dict(storage=value.targets["profile"], samples=len(observations),
+                        node=value.targets["node"], grade=value.targets["grade"],
+                        observed_stalks=sum(len(o["observed"]) for o in observations),
+                        native_target_bytes=sum(len(o["target"]) for o in observations),
+                        input_fields=sum(len(o["inputs"]) for o in observations),
+                        retains_complete_measurements=True)
+                else:
+                    targets = dict(storage=value.targets["profile"],samples=value.targets["samples"],
+                        observed_stalks=len(value.targets["stalks"]),
+                        tensors=sum(len(fields) for _,fields in value.targets["stalks"]))
+            else:
+                targets = ({"shape": list(value.targets.shape), "dtype": str(value.targets.dtype)} if stored else
+                           _array(value.targets, max_values))
+            out.update(targets=targets, observed=_array(value.observed, max_values),
                        observed_count=int(value.observed.sum()), inputs="query explicitly")
+            if stored:
+                out.update(training_profile=value.inputs["profile"],
+                           sample_count=len(value.inputs["samples"]), target_storage="native source fields")
         return out
     from rexgraph.chain_map import SymmetryGroup
     if isinstance(value, SymmetryGroup):
@@ -283,7 +610,7 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
             "metric_digest": None if value.metric is None else value.metric.coefficient_digest,
             "action_variance": value.operator.variance,
         }
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(k): json_value(v, max_values=max_values) for k, v in value.items()}
     if isinstance(value, SourcePolicy):
         return {"permissions": sorted(value.permissions),
@@ -294,7 +621,7 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
     if is_dataclass(value):
         # Do not deep copy a dataclass's live source graph just to render it.
         out = {field.name: json_value(getattr(value, field.name), max_values=max_values)
-               for field in fields(value) if not field.name.startswith("_") and field.name != "source"}
+               for field in dataclass_fields(value) if not field.name.startswith("_") and field.name != "source"}
         if isinstance(value, ExactSectionCheck):
             out.update(kind="ExactSectionCheck", compatible=value.compatible,
                        diagnostic="anchor-incidence-residuals")

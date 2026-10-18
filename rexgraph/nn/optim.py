@@ -106,12 +106,16 @@ if _HAS_TORCH:
 
         For a group with sparse green_adj A_hat, solve `(I + t L) x = g`, with
         `L = I - A_hat**k`, by the configured number of conjugate gradient iterations.
+        Apply A_hat k times to each feature block without constructing its power.
         Apply Adam moments to x for low, twohop and threehop, or to `g - x` for high.
         Parameters without an adjacency or with a different first dimension use Adam
         without the Green solve.
 
+        CPU float32 and float64 solves cache a CSR execution operator. The declared
+        adjacency retains its original layout for checkpoint identity and restoration.
+
         green_channel selects k=1 for low/high, k=2 for twohop, and k=3 for threehop.
-        Adjacency powers are cached per group. generate_khop_channel selects a channel
+        Execution operators are cached per group. generate_khop_channel selects a channel
         using a caller supplied score. Requires PyTorch.
         """
 
@@ -123,27 +127,43 @@ if _HAS_TORCH:
                              green_lam=green_lam, green_iters=green_iters,
                              green_channel=green_channel, green_adj=None))
 
-        # channel -> (operator power on A_hat, low pass?): low/high walk 1 hop; twohop/threehop
-        # walk the sparse k-hop A_hat**k (the 0s keep it sparse; k-hop carries structure a
-        # heterophilous complex needs (2 hop neighbours agree where 1 hop neighbours disagree).
+        # Number of adjacency applications in each Green channel.
         _CH_POWER = {"low": 1, "high": 1, "twohop": 2, "threehop": 3}
 
         @staticmethod
         def _channel_op(adj, channel, group):
-            power = GreensCochain._CH_POWER.get(channel, 1)
             cache = group.setdefault("_op_cache", {})
-            if channel not in cache:
-                op = adj
-                for _ in range(power - 1):
-                    op = _sparse_mm(adj, op).coalesce()      # sparse A_hat**k, stays sparse
-                cache[channel] = op
+            if cache.get(channel) is not adj:
+                cache[channel] = adj
             return cache[channel], (channel != "high")
 
         @staticmethod
-        def _greens(op, g, t, low, iters):
+        def _execution_op(op, channel, group):
+            """Cache CPU CSR storage for a channel without replacing its declared tensor."""
+            if (op.device.type != "cpu" or op.layout != _torch.sparse_coo
+                    or op.dtype not in {_torch.float32, _torch.float64} or op.is_inference()):
+                return op
+            cache = group.setdefault("_op_cache", {})
+            key = ("cpu_csr", channel)
+            previous = cache.get(key)
+            if previous is not None and previous[0] is op and previous[1] == op._version:
+                return previous[2]
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=r"Sparse CSR tensor support is in beta state.*",
+                                        category=UserWarning)
+                csr = op.to_sparse_csr()
+            cache[key] = (op, op._version, csr)
+            return csr
+
+        @staticmethod
+        def _greens(op, g, t, low, iters, power=1):
             g2 = g if g.dim() >= 2 else g.unsqueeze(1)
             def mv(X):
-                return (1.0 + t) * X - t * _sparse_mm(op, X)
+                applied = X
+                for _ in range(power):
+                    applied = _sparse_mm(op, applied)
+                return (1.0 + t) * X - t * applied
             X = _torch.zeros_like(g2); R = g2 - mv(X); P = R.clone()
             rs = (R * R).sum(0, keepdim=True)
             for _ in range(iters):
@@ -171,7 +191,8 @@ if _HAS_TORCH:
                         g = g.add(p, alpha=wd)
                     if adj is not None and p.dim() >= 1 and p.shape[0] == adj.shape[0]:
                         op, low = self._channel_op(adj, ch, group)
-                        g = self._greens(op, g, t, low, it)
+                        op = self._execution_op(op, ch, group)
+                        g = self._greens(op, g, t, low, it, self._CH_POWER.get(ch, 1))
                     st = self.state[p]; ts = st.get("t", 0) + 1; st["t"] = ts
                     m = st.get("m"); v = st.get("v")
                     if m is None:

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from fractions import Fraction
 from math import prod
 from numbers import Integral
+
 import numpy as np
 
 from rexgraph.coordinate_map import _identity, _is_action
@@ -30,8 +31,8 @@ class FieldSource:
             raise ValueError("record version must be a nonnegative integer")
         digest = self.state_digest
         if self.source is not None:
-            from rexgraph.state import to_state
             from rexgraph.object_identity import state_object_digest
+            from rexgraph.state import to_state
             current = state_object_digest(to_state(self.source))
             if digest is not None and digest != current:
                 raise ValueError("source does not match the declared native state identity")
@@ -53,8 +54,8 @@ class FieldSource:
     def check(self):
         if self.source is None:
             return
-        from rexgraph.state import to_state
         from rexgraph.object_identity import state_object_digest
+        from rexgraph.state import to_state
         if state_object_digest(to_state(self.source)) != self.state_digest:
             raise ValueError("native source changed; select a fresh state")
 
@@ -66,6 +67,9 @@ class FieldSource:
 
     def as_record(self):
         return {"record_id": self.record_id, "version": self.version, "state_digest": self.state_digest}
+
+    def detached(self):
+        return FieldSource(None, self.record_id, self.version, self.state_digest)
 
 
 @dataclass(frozen=True, eq=False)
@@ -185,9 +189,9 @@ class TensorField:
 
 
 def _native_sources(action):
-    from rexgraph.native_field import FieldAction, NativeAction, ActionSum, BilinearFormAction
-    from rexgraph.coordinate_map import CoordinateWord, CoordinateDifference
     from rexgraph.attachment_field import AttachmentAction
+    from rexgraph.coordinate_map import CoordinateDifference, CoordinateWord
+    from rexgraph.native_field import ActionSum, BilinearFormAction, FieldAction, NativeAction
     if isinstance(action, AttachmentAction):
         ref = action.observation.field.source
         return () if ref is None or ref.source is None else (ref.source,)

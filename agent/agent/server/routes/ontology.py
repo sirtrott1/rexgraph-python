@@ -9,7 +9,7 @@ annotation file loaded with its ontology resolves its term ids against the hiera
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
 
 router = APIRouter(prefix="/v1/ontology")
 
@@ -178,6 +178,7 @@ async def _collect(files, text, format):
 
 @router.post("/upload")
 async def upload_ontology(
+    request: Request,
     files: list[UploadFile] = File(...),
     format: str = Form(""),
     store_id: str = Form(""),
@@ -224,6 +225,9 @@ async def upload_ontology(
                  or "nothing could be parsed")
 
     parsed = parsed_all[0] if len(parsed_all) == 1 else OF.combine(*parsed_all)
+    # Preserve the API default when FastAPI treats an omitted boolean as unchecked.
+    if "use_names" not in await request.form():
+        use_names = True
     body = {"store_id": store_id, "lineage_id": lineage_id, "use_names": use_names}
     report = _report(parsed, body)
     report["files"] = [p.meta.get("file") for p in parsed_all]

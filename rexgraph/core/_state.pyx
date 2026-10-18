@@ -23,6 +23,8 @@ Includes RexState class for managing signal evolution and energy.
 
 from __future__ import annotations
 
+from fractions import Fraction
+from numbers import Integral
 import numpy as np
 cimport numpy as np
 cimport cython
@@ -31,6 +33,37 @@ from libc.math cimport fabs, sqrt
 from libc.string cimport memcpy
 
 np.import_array()
+
+
+def encode_exact_coefficients(values):
+    """Encode integer and Fraction coefficients as typed hexadecimal bytes."""
+    cdef object array = np.asarray(values, dtype=object)
+    cdef object value, numerator, denominator, key, line
+    cdef list pieces = []
+    cdef dict cache = {}
+    for value in array.flat:
+        key = None
+        if isinstance(value, Fraction):
+            numerator = value.numerator
+            denominator = value.denominator
+            if type(value) is Fraction and type(numerator) is int and type(denominator) is int:
+                key = (0, numerator, denominator)
+            line = cache.get(key) if key is not None else None
+            if line is None:
+                line = f"q:{numerator:x}/{denominator:x}\n"
+        elif isinstance(value, Integral) and not isinstance(value, (bool, np.bool_)):
+            numerator = int(value)
+            key = (1, numerator)
+            line = cache.get(key)
+            if line is None:
+                line = f"i:{numerator:x}\n"
+        else:
+            raise TypeError("exact object tensor require integer or Fraction coefficients")
+        if key is not None and len(cache) < 1024:
+            cache[key] = line
+        pieces.append(line)
+    return np.frombuffer("".join(pieces).encode("ascii"), dtype=np.uint8).copy()
+
 
 cdef enum:
     _NORM_L1 = 0

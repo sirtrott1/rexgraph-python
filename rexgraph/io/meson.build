@@ -8,6 +8,7 @@ py.install_sources(
         '_serialization.py',
         'arrow_bridge.py',
         'artifact_backend.py',
+        'algebraic_record.py',
         'bundle.py',
         'catalog.py',
         'commit.py',

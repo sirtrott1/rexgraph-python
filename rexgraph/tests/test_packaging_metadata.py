@@ -38,11 +38,7 @@ def test_every_classifier_is_a_real_one(manifest):
 
 @pytest.mark.parametrize("manifest", MANIFESTS)
 def test_the_license_is_an_spdx_expression(manifest):
-    """The identifier, not the license's prose name.
-
-    `{text = "Apache License 2.0"}` is the deprecated table form AND not an SPDX id, so
-    it lands in metadata as an opaque string rather than a License Expression.
-    """
+    """Keep the SPDX expression in metadata and ship the license separately."""
     licence = _project(manifest).get("license")
     assert isinstance(licence, str), (
         f"{manifest}: expected an SPDX string, got {licence!r}")
@@ -51,13 +47,10 @@ def test_the_license_is_an_spdx_expression(manifest):
 
 @pytest.mark.parametrize("manifest", MANIFESTS)
 def test_the_license_file_is_inside_its_own_project(manifest):
-    """A path that escapes the project root is DROPPED, not rejected.
+    """Require a packaged license file within each distribution's source root.
 
-    The agent pointed at `../LICENSE` and built a wheel that declared Apache-2.0 while
-    shipping no license at all, which the license itself requires it to ship. Nothing failed;
-    the file was simply absent. So the check is that each declared path stays inside the
-    manifest's own directory and actually exists there.
-    """
+    A path escaping the project can be omitted by the build backend, leaving
+    metadata that names a license without the corresponding file."""
     base = (ROOT / manifest).parent
     declared = _project(manifest).get("license-files", [])
     assert declared, f"{manifest} declares no license-files"
@@ -69,7 +62,7 @@ def test_the_license_file_is_inside_its_own_project(manifest):
 
 @pytest.mark.parametrize("manifest", MANIFESTS)
 def test_the_project_says_where_it_lives(manifest):
-    """A package with no URLs is a page with nowhere to go from."""
+    """Expose a repository URL through the installed package metadata."""
     urls = _project(manifest).get("urls", {})
     assert urls, f"{manifest} declares no project URLs"
     assert any("github.com" in v for v in urls.values()), urls

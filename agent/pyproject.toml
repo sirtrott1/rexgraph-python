@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rexgraph-agent"
-version = "1.3.1"
+version = "1.3.2"
 description = "Orchestration, server, frontend, and integrations for the RexGraph ecosystem"
 readme = "README.md"
 # SPDX, per PEP 639: "Apache License 2.0" is the name, not the identifier,
@@ -43,11 +43,11 @@ classifiers = [
 # (imported by `agent/__init__.py`) uses pandas for CSV/DataFrame
 # auto detection, so it is required for the package to import at all.
 dependencies = [
-    "rexgraph>=1.3.1",
+    "rexgraph>=1.3.2",
     # Not optional: agent.metrics and agent.scoring export from rcdb.analytics, and
     # agent.rcdb and its four siblings are compatibility surfaces over the package. The
     # agent does not import without it.
-    "rexgraph-rcdb>=1.3.1",
+    "rexgraph-rcdb>=1.3.2",
     "numpy>=1.24",
     # Agent's existing pipeline and graph views use SciPy directly. Core and
     # RCDB no longer provide this dependency transitively.
@@ -58,7 +58,7 @@ dependencies = [
 [project.optional-dependencies]
 # Optional molecular syntax and substructure interpretation.
 molecules = [
-    "rexgraph[molecules]>=1.3.1",
+    "rexgraph[molecules]>=1.3.2",
 ]
 
 # Columnar queries and DataFrame views of stored structural signatures.
@@ -75,7 +75,7 @@ baselines = [
 # Typed queries over live agent values. agent/agent/rcql_runtime.py binds sources and
 # policies; the language itself depends on rexgraph alone and never imports the agent.
 rcql = [
-    "rexgraph-rcql>=1.3.1",
+    "rexgraph-rcql>=1.3.2",
 ]
 
 # Sealing and opening a rexgraph container. agent/agent/kms.py resolves a key
@@ -256,7 +256,7 @@ standard = [
 # The torch ML stack: LoRA fine tuning, HuggingFace model analysis, training
 # export. Heavy: pulls torch, transformers, peft, datasets.
 ml = [
-    "rexgraph[nn]>=1.3.1",
+    "rexgraph[nn]>=1.3.2",
     "rexgraph-agent[training,finetune,huggingface]",
 ]
 
@@ -276,7 +276,7 @@ all = [
 # datasets remain separate requirements reported by the test runner.
 test-full = [
     "rexgraph-agent[standard,dev,ml,molecules,analytics,baselines,langchain,langgraph]",
-    "rexgraph[dev,tf]>=1.3.1",
+    "rexgraph[dev,tf]>=1.3.2",
 ]
 
 [project.scripts]

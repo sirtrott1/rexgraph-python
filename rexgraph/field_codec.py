@@ -2,13 +2,19 @@
 from __future__ import annotations
 
 import json
-import numpy as np
-from rexgraph.value_codec import pack_spec, unpack_spec
 
-from rexgraph.tensor_field import FieldSource,TensorField,TensorChannels
-from rexgraph.tensor_moment import CoordinatePairing,MomentSpan
+import numpy as np
+
+from rexgraph.source_binding import (
+    CppAlgebraicSourceReference,
+    CppSourceReference,
+    source_from_record,
+)
 from rexgraph.temporal_field import MomentChange
+from rexgraph.tensor_field import TensorChannels, TensorField
+from rexgraph.tensor_moment import CoordinatePairing, MomentSpan
 from rexgraph.type_accession import CoordinateSpace
+from rexgraph.value_codec import pack_spec, unpack_spec
 
 FIELD_VALUES=(TensorField,TensorChannels,MomentSpan,MomentChange)
 
@@ -24,16 +30,20 @@ def _source(source):
 def pack_field(value, *, native=False):
     """Encode retained exact values without serializing live source objects."""
     tensors={}
+    cpp_sources = []
+    def source(node):
+        if isinstance(node, (CppSourceReference, CppAlgebraicSourceReference)): cpp_sources.append(node)
+        return _source(node)
     def put(node,path):
         if isinstance(node,TensorField):
             tensors[path+"values"]=np.array(node.values,dtype=object,copy=True)
             return {"kind":"field","space":_space(node.space),"axes":[_space(a) for a in node.axes],
-                    "source":_source(node.source),"grade":node.grade,"variance":node.variance,
+                    "source":source(node.source),"grade":node.grade,"variance":node.variance,
                     "provenance":node.provenance,"tensor":path+"values",
-                    "dependencies":[s.as_record() for s in node.dependencies]}
+                    "dependencies":[source(s) for s in node.dependencies]}
         if isinstance(node,TensorChannels):
             return {"kind":"channels","names":node.names,"declaration":node.declaration_digest,
-                    "sources":[s.as_record() for s in node.endpoint_sources],
+                    "sources":[source(s) for s in node.endpoint_sources],
                     "fields":[put(f,path+f"field/{i}/") for i,f in enumerate(node.fields)]}
         if isinstance(node,MomentSpan):
             if not isinstance(node.pairing,CoordinatePairing):
@@ -44,14 +54,15 @@ def pack_field(value, *, native=False):
             return {"kind":"moment","left":put(node.left,path+"left/"),"right":put(node.right,path+"right/"),
                     "form":{"left":_space(form.left),"right":_space(form.right),"indices":path+"indices",
                             "coefficients":path+"coefficients"},"channels":node.channel_keys,"kernel":node.kernel_digest,
-                    "sources":[s.as_record() for s in node.endpoint_sources]}
+                    "sources":[source(s) for s in node.endpoint_sources]}
         if isinstance(node,MomentChange):
             tensors[path+"weights"]=np.asarray([w for _,w,_ in node.terms],dtype=object)
             return {"kind":"change","old":put(node.old,path+"old/"),"new":put(node.new,path+"new/"),
                     "names":[n for n,_,_ in node.terms],"weights":path+"weights",
                     "terms":[put(v,path+f"term/{i}/") for i,(_,_,v) in enumerate(node.terms)]}
         raise TypeError("unsupported retained exact value")
-    spec={"version":1,"root":put(value,"value/")}
+    root = put(value,"value/")
+    spec={"version":2 if cpp_sources else 1,"root":root}
     tensors["spec"] = pack_spec(spec, tensors, native=native)
     return tensors
 
@@ -62,7 +73,7 @@ def unpack_field(tensors):
     def space(s):
         return CoordinateSpace(s["name"],tuple(s["keys"]))
     def source(s):
-        return None if s is None else FieldSource(None,s["record_id"],s["version"],s["state_digest"])
+        return None if s is None else source_from_record(s, allow_cpp=spec["version"] == 2)
     def take(node):
         kind=node["kind"]
         if kind=="field":
@@ -96,7 +107,7 @@ def unpack_field(tensors):
         if raw.dtype!=np.uint8 or raw.ndim!=1:
             raise ValueError("invalid retained field specification")
         spec=unpack_spec(tensors)
-        if spec.get("version")!=1:
+        if spec.get("version") not in {1, 2}:
             raise ValueError("unsupported retained field schema version")
         value = take(spec["root"])
         if used != set(tensors):

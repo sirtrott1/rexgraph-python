@@ -1,11 +1,14 @@
 # RexGraph Core
 
-Core constructs relational complexes and provides homology, Hodge analysis,
-operator actions, propagation, persistence and native file formats. A relation
-is one cell with declared participants and coefficients. Explicit boundaries
-connect cells at successive grades, numbered 0 for vertices, 1 for relations
-and 2 for faces. This allows pairwise links, shared relations
-and filled boundaries to coexist in the same complex.
+Core starts from the relationships an application needs to preserve. A pairwise
+link and a measurement shared by several entities can each be one relation,
+with its own participants and coefficients. Boundaries connect vertices at
+grade 0, relations at grade 1 and faces at grade 2. Adding a face declares a
+filling of its boundary; finding a loop alone does not add that filling.
+
+These choices determine the homology, Hodge components and operator responses
+computed below. Construct the complex first, then attach a signal and choose
+the operation whose output answers the application question.
 
 The Python API uses compiled Cython kernels for sparse storage and numerical
 computation. Integer and rational paths retain exact coefficients and ranks;
@@ -100,9 +103,10 @@ assert np.allclose(gradient + curl + harmonic, signal)
 
 The gradient component comes from vertex potentials, the curl component from
 face boundaries, and the harmonic component from the Hodge operator's kernel.
-When a complex has no upper grade, its upper operator is exactly zero. The
-relationships and signal supplied by the caller determine how to interpret
-these components in an application.
+The cycle above has no face, so its upper operator and curl component are zero.
+Declaring a filling changes which signals can be face boundaries, even if the
+relation values stay the same. Interpret a component with its source and metric;
+a nonzero residual alone does not label a relation as contradictory or ironic.
 
 `Cochain`, `Chain`, `Field` and `GradedState` retain the cell grade and optional
 ordered basis alongside values. This information lets boundary, coboundary
@@ -179,6 +183,79 @@ component transport; a restriction drops an upper cell when its boundary loses
 a participant. `Selection` and `restrict` provide explicit grade selections
 with maps back to the original basis. See the
 [state and selection contracts](REFERENCE.md#declared-data-and-exact-io).
+
+## Exact native models
+
+The optional `rexgraph_cpp` provider executes whole field programs with exact
+source and map declarations. Install it using the
+[bridge guide](../bindings/cpp/README.md#installation). These models retain
+intermediate fields and unresolved alternatives; the numerical cochain models
+listed above have separate optimizers and checkpoint formats.
+
+An available finite map retains symbolic alternatives and complete fixed or affine
+field targets. Its Core model stores the original literal source, immutable map
+archive and the ordered target model checkpoints:
+
+```python
+from rexgraph.cpp_relational_finite_field import (
+    cpp_available_finite_field_model, finite_field_query, read_finite_field_result,
+)
+from rexgraph.model_runtime import infer_model
+
+state = cpp_available_finite_field_model(
+    literal_source, available_map=available_map, targets=target_models,
+    execution_context=execution_context,
+)
+output = infer_model(
+    state, literal_source, finite_field_query(state),
+    execution_context=execution_context,
+)
+family = read_finite_field_result(output, execution_context=execution_context)
+branches = family.select(0, 1, execution_context)
+```
+
+The instance executes its original raw rule inputs. It does not rebind new data
+into the stored map. `evaluate_finite_field` selects an interpreted branch using
+its full free vector, the independent global parameter setting and a separate
+input specific Prospective choice receipt. Fixed branches use an empty vector and
+setting key zero. `finite_field_stalks` reports the actual target source after an
+explicit completion. Ordinary training, undeclared source transport and promotion
+into the existing local solve RHS are unsupported.
+
+RCQL exposes `MODEL_INIT` with adapter `cpp_relational_finite_field`,
+`MODEL_FINITE_BRANCHES`, `MODEL_FINITE_COMPLETE`, and the common model inspection,
+record and stalk operations. Admitted operations require the current native
+execution context. Passive model/value packing does not grant execution authority.
+
+Admitted finite operators reuse an original finite model with independently
+supplied input instances. Each instance retains its declared source transport,
+complete input fields and publication receipts:
+
+```python
+from rexgraph.cpp_relational_finite_operator import (
+    cpp_available_finite_operator_model, finite_operator_query,
+    read_finite_operator_result,
+)
+from rexgraph.model_runtime import infer_model
+
+model = cpp_available_finite_operator_model(
+    original_source, reference_state=original_finite_model,
+    available_operator=admitted_operator, execution_context=context,
+)
+query = finite_operator_query(model, admitted_input_instance,
+                              execution_context=context)
+output = infer_model(model, original_source, query, execution_context=context)
+family = read_finite_operator_result(output, state=model,
+                                    execution_context=context)
+branches = family.select(0, family.inspect(context)["branch_count"], context)
+```
+
+The model keeps its original source and checkpoint. The output records the
+actual input source and instance separately and retains every unresolved
+branch and whole field. Affine completion requires a published global parameter
+setting and a separate prospective choice for the input. Fixed completion uses
+empty coordinates and parameter setting key zero. Ordinary training and
+implicit source transport are unsupported for the operator checkpoint.
 
 ## Examples and reference
 

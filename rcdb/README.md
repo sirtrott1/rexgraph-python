@@ -1,10 +1,15 @@
 # RCDB
 
-RCDB stores native relational complexes and typed records with version history.
-It supports memory, local, SQLite and object storage, retains exact payload
-values, and provides explicit publication, copy and migration operations.
-Applications can query metadata and structural signatures without reconstructing
-every saved complex.
+An analysis result may need to be read after its source has changed. RCDB stores
+relational complexes and typed records as versions, so an application can name
+the state it used and read that version again. Memory, local, SQLite and object
+stores share record interfaces, with publication guarantees specific to each
+backend.
+
+Metadata and structural signatures let an application find candidate records
+without reconstructing every complex. The saved payload remains the state to
+recover; a signature summarizes selected measurements and cannot stand in for
+that payload. Copy and migration operations preserve this distinction.
 
 RCDB depends on RexGraph, NumPy and safetensors. Agent, RCQL and System can use
 its stores independently. Base native record operations do not require SciPy;
@@ -70,6 +75,11 @@ declarations, provenance and selected artifact types. RCQL result storage is
 registered explicitly when required. Metadata and tags can be queried across
 record kinds; graph predicates apply to records containing complexes.
 
+Graph and temporal payloads use the common safetensors byte codec, including
+legacy `serialize_complex` and `deserialize_complex` calls. These calls do not
+create temporary files. Existing file produced payloads remain readable, and
+state identity is checked across container conversion and checked store copies.
+
 Structural signatures summarize selected graph measurements for indexing.
 Derived analytics and optional search features have their own dependencies;
 the stored native payload remains the record's state identity. Protected
@@ -87,6 +97,19 @@ search can restrict exposed fields and use configured keyed tokens.
 
 The [API reference](REFERENCE.md) documents selectors, codec inventories,
 search restrictions and maintenance policies.
+
+RCBD bundles and RCBF streams are interchange containers, separate from an RCDB
+store layout. Import a supported RCBF snapshot with `rexgraph.io.load_rcbf`,
+then pass the graph to `put`; `save_rcbd` exports a complete supported graph.
+Native C++ archives use their explicit bridge record adapters to retain the
+original archive bytes. Use `copy_record` for checked transfers between stores.
+
+Legacy `RexStore` compaction stages a complete directory before replacing its
+journal and blob pack together. It needs temporary disk space for that copy and
+the compacted pack. A failed write or interrupted publication preserves the
+previous directory; this rename and rollback protocol does not promise an
+atomic directory exchange across a host crash. Legacy sources must stay
+quiescent during maintenance or migration.
 
 ## Governed history
 

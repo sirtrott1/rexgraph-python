@@ -532,15 +532,11 @@ def malaugh_quantities(rex):
     }
 
 
-#### eigen free heat propagation of SIGNALS (Chebyshev matrix vector)
-# Applying e^{-tL} to a signal is O(nnz*K) via a Chebyshev polynomial of L: exact
-# to the polynomial order, ANY t, NO eigendecomposition. (Only the DIAGONAL of
-# e^{-tL} lacks an exact O(nnz) form; the vector/state apply does not. Same insight
-# as the sparse Dirac. This is the reusable heat primitive for _signal, the field
-# evolvers, and the NN/LM layer.) Shape: L is symmetric PSD sparse (a Hodge/graph
-# Laplacian); f is (n,) or a block (n, m). Every step is spmv/spmm + a small gemm,
-# the ideal multi core / GPU shape; the mat vec is `L @ x`, swappable for a
-# compute.dispatch('spmv', ...) backend later without touching callers.
+# Chebyshev actions approximate a matrix function on a supplied spectral interval.
+# For a symmetric PSD L, the recurrence uses sparse products on f of shape (n,)
+# or (n, m). Order controls polynomial truncation; floating arithmetic adds its
+# own error. This numerical heat path does not provide exact rational evolution.
+# Reusing the recurrence avoids requesting an eigenbasis or a complete heat kernel.
 
 def _gershgorin_bound(L):
     """Upper bound on lambda_max(L) for symmetric L via Gershgorin (max absolute row
@@ -597,15 +593,18 @@ def _heat_order(t, lam_max, given):
 
 
 def matfunc_apply(L, f, func, order, lam_max=None, backend=None):
-    """Apply a GENERAL matrix function func(L) to a signal/block f via a Chebyshev
-    polynomial of L: O(nnz*order) sparse mat vecs, NO eigendecomposition. `func` maps
-    eigenvalues (samples in [0, lam_max]) to scalars: e.g. `lambda l: exp(-t*l)` (heat),
-    `lambda l: cos(t*sqrt(l))` (wave), `lambda l: 1/(l+s)` (shifted resolvent). L is
-    symmetric with spectrum in [0, lam_max]; f is (n,) or a block (n, m). This is the
-    reusable f(L)·state primitive underneath heat/wave/field evolution. The mat vecs
-    are spmv/spmm and the combine is a gemm: the SAME computation runs on CPU (scipy)
-    or, when a GPU backend is active (`backend`, or the compute default), entirely
-    on device (a GPU resident Chebyshev). CPU is the always available fallback."""
+    """Approximate func(L) f with a Chebyshev polynomial of the given order.
+
+    L must be symmetric with spectrum in [0, lam_max]; f is a vector or a block
+    of columns. ``func`` maps sampled spectral values to real scalars, for
+    example exp(-t*l) for heat or cos(t*sqrt(l)) for waves. A supplied lam_max
+    must enclose the spectrum; otherwise a Gershgorin bound is used.
+
+    Sparse products evaluate the recurrence on CPU or a selected GPU backend.
+    For one vector, work scales with nnz(L) times order. A block adds work per
+    column. Order controls the approximation, and no residual or truncation
+    certificate is returned. Explicit Vulkan failures propagate; automatic
+    backend attempts can fall back to CPU."""
     order = int(order)
     if lam_max is None:
         lam_max = _gershgorin_bound(L) * 1.0001 + 1e-30
@@ -618,9 +617,9 @@ def matfunc_apply(L, f, func, order, lam_max=None, backend=None):
         except Exception:
             if backend == "vulkan":
                 raise
-    # Size auto gate: the GPU wins only when the work (n * order * columns) is big enough
-    # to amortize host<->device transfer; smaller problems stay on CPU (identical result,
-    # just faster). `backend='gpu'/'auto'` still honors the gate; the CPU path is exact.
+    # Small jobs stay on CPU to avoid transfer overhead. Both backends evaluate
+    # the same truncated polynomial numerically; neither certifies exact heat flow.
+    # The size gate also applies to backend='gpu'/'auto'.
     fa = np.asarray(f)
     ncols = int(fa.reshape(fa.shape[0], -1).shape[1])
     work = int(fa.shape[0]) * order * ncols

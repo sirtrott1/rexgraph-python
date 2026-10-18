@@ -869,15 +869,18 @@ def _compute_sparse_phi_gpu(rex, cheap, chunk, device=None):
 
 
 def compute_sparse_phi(rex, cheap, chunk=1024, backend=None, device=None):
-    """Per vertex Green's character phi and coherence kappa, given the cheap bundle.
+    """Compute numerical vertex Green character phi and coherence kappa.
 
-    phi(v,k) = [b_v^T RL^-1 hat_k RL^-1 b_v] / [b_v^T RL^-1 b_v], b_v = B1[v,:], via
-    Fixed tolerance numerical per vertex block CG solves RL X = B1^T (accuracy
-    is scale independent). This is the O(nV·solve) global Green's refinement: the
-    sandwiched two inverse numerator resists selected inversion, so it genuinely
-    costs the nV solves; callers gate it to a tractable node budget and fall back to
-    the O(nnz) cheap character (chi/chi*) + moment character otherwise. Returns
-    {phi, kappa}. `chunk` only tiles vertices for peak memory (does not change math)."""
+    For b_v = B1[v, :], each channel reading is
+
+        phi(v,k) = (b_v.T RL^-1 hat_k RL^-1 b_v) / (b_v.T RL^-1 b_v).
+
+    Block CG solves RL X = B1.T one vertex block at a time. ``chunk`` bounds
+    the block width rather than changing the requested character. This routine
+    requests a right hand side for every vertex, so it can cost substantially
+    more than the incidence local chi and chi* readings in ``cheap``. Callers
+    choose whether that refinement fits their work budget. Returns phi and
+    kappa; solver tolerance and the selected backend govern numerical accuracy."""
     nV, nE = int(rex.nV), int(rex.nE)
     nhats = int(cheap['nhats'])
     uniform = 1.0 / nhats if nhats > 0 else 0.0
@@ -893,9 +896,8 @@ def compute_sparse_phi(rex, cheap, chunk=1024, backend=None, device=None):
             except Exception:
                 pass                                    # any GPU issue -> CPU tiling
         from rexgraph import compute as _compute
-        # The channels apply THROUGH INCIDENCE; RL is never assembled here. An
-        # assembled RL carries sum_v deg(v)^2 nonzeros: the hub blocks a Gram
-        # materialises: and those blocks are what the action never forms.
+        # Apply channels through incidence. A Gram matrix can couple every pair
+        # in a large vertex star; factored actions avoid storing those pairs.
         apply_rl, apply_hat = factored_channel_actions(
             rex, list(cheap['hat_names']), list(np.asarray(cheap['trace_values'], dtype=_f64)))
         Bs = _b1_csr(rex)
