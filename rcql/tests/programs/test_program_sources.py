@@ -148,3 +148,19 @@ def test_program_declaration_tamper_is_not_executable():
     from rcql.program_codec import loads,dumps
     data=loads(p.to_bytes());data['version']=True
     with pytest.raises(ValueError):Program.from_bytes(dumps(data))
+
+
+def test_store_service_is_not_serialized_as_a_mathematical_field_source():
+    from rcdb import MemoryStore
+    graph, _, _ = native()
+    store = MemoryStore()
+    program = Program('mixed_sources', (
+        ProgramStep('field', parse('FROM $r RETURN COUNT(CELLS(1))')),
+        ProgramStep('service', parse('FROM $db RETURN 7'))),
+        outputs=(('field', OutputRef('field')), ('service', OutputRef('service'))))
+    result = Executor(sources={'r': graph, 'db': store}).execute_program(program)
+    assert result.values == (3, 7)
+    assert len(result.dependencies) == 1
+    assert result.dependencies[0].source is graph
+    assert len(result.sources) == 2
+    assert any(source['state_digest'] is None for source in result.sources)

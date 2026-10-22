@@ -48,6 +48,7 @@ dependencies = [
     # agent.rcdb and its four siblings are compatibility surfaces over the package. The
     # agent does not import without it.
     "rexgraph-rcdb>=1.3.2",
+    "rexgraph-rcql>=1.3.2",
     "numpy>=1.24",
     # Agent's existing pipeline and graph views use SciPy directly. Core and
     # RCDB no longer provide this dependency transitively.
@@ -72,11 +73,9 @@ baselines = [
     "xgboost>=2.1; sys_platform == 'darwin'",
 ]
 
-# Typed queries over live agent values. agent/agent/rcql_runtime.py binds sources and
-# policies; the language itself depends on rexgraph alone and never imports the agent.
-rcql = [
-    "rexgraph-rcql>=1.3.2",
-]
+# Compatibility extra: RCQL is part of the Agent's direct runtime dependencies.
+# The language continues to depend on Core, without importing Agent.
+rcql = []
 
 # Sealing and opening a rexgraph container. agent/agent/kms.py resolves a key
 # identifier and does the AEAD; rexgraph core stays free of both.

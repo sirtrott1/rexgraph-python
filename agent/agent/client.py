@@ -226,6 +226,34 @@ class RexClient:
         return self._post("/rex/v1/call",
                           json={"name": name, "arguments": arguments})
 
+    def rcdb_list(self, *, limit=100, offset=0) -> dict:
+        """List the caller's records through the common Agent capability route."""
+        return self.rex_call("rexgraph_rcdb_list", limit=limit, offset=offset)
+
+    def rcdb_inspect(self, record_id: str, **options) -> dict:
+        return self.rex_call("rexgraph_rcdb_inspect", record_id=record_id, **options)
+
+    def rcdb_publish(self, record_id: str, cells=None, *, expected_version, **options) -> dict:
+        if cells is not None:
+            options["cells"] = cells
+        return self.rex_call("rexgraph_rcdb_publish", record_id=record_id,
+            expected_version=expected_version, **options)
+
+    def rcql_query(self, query: str, **options) -> dict:
+        """Run RCQL; the reply includes exact canonical Result bytes and a preview."""
+        return self.rex_call("rexgraph_rcql_query", query=query, **options)
+
+    def rcql_publish_program(self, record_id: str, declaration, *, expected_version) -> dict:
+        return self.rex_call("rexgraph_rcql_publish_program", record_id=record_id,
+            declaration=declaration, expected_version=expected_version)
+
+    def rcql_run_program(self, record_id: str, **options) -> dict:
+        return self.rex_call("rexgraph_rcql_run_program", record_id=record_id, **options)
+
+    def rcql_transform_program(self, record_id: str, *, version, rule, arguments, **options) -> dict:
+        return self.rex_call("rexgraph_rcql_transform_program", record_id=record_id,
+            version=version, rule=rule, arguments=arguments, **options)
+
     def rex_audit(self, limit: int = 200) -> dict:
         """This workspace's trail, and whether the chain still verifies."""
         return self._get("/rex/v1/audit", limit=limit)

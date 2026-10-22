@@ -303,6 +303,10 @@ def _carrier_literal(binding: Binding, value: object) -> RCType | tuple | None:
         TypeView,
     )
 
+    from .task_outcome import TaskOutcome
+    if isinstance(value, TaskOutcome):
+        return RCType("TaskOutcome", kind=ValueKind.TASK_OUTCOME, domain=Domain.METADATA,
+                      exactness=Exactness.STRUCTURAL, declaration_digest=value.coefficient_digest)
     from .model_contracts import model_literal
     model_type = model_literal(binding, value)
     if model_type is not None:

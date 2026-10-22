@@ -1,10 +1,10 @@
 """Finite program declarations with no executable object decoding."""
-from dataclasses import fields
-from fractions import Fraction
 import base64
 import hashlib
 import json
 import math
+from dataclasses import fields
+from fractions import Fraction
 
 from . import ast
 
@@ -126,12 +126,10 @@ def operators(query):
     return tuple(sorted(found))
 
 
-def implementation_identity():
-    """Identify installed Python definitions and compiled native modules."""
+def _implementation_inputs():
     import importlib.util
-    import importlib.metadata
     from pathlib import Path
-    h = hashlib.sha256()
+    files = []
     for package in ("rexgraph", "rcql", "rcdb"):
         spec = importlib.util.find_spec(package)
         if spec is None or spec.origin is None:
@@ -141,12 +139,103 @@ def implementation_identity():
             if path.suffix not in {".py", ".so", ".pyd"} or "tests" in path.parts:
                 continue
             name = (package+"/"+path.relative_to(root).as_posix()).encode()
-            h.update(len(name).to_bytes(8, "big")); h.update(name)
-            h.update(hashlib.sha256(path.read_bytes()).digest())
+            files.append((name, path))
+    return tuple(files), _implementation_versions()
+
+
+def _implementation_versions():
+    import importlib.metadata
+    versions = []
     for package in ("numpy", "scipy", "torch", "rdkit"):
         try:
             version = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
             version = "absent"
-        h.update((package+"="+version).encode())
+        versions.append((package+"="+version).encode())
+    return tuple(versions)
+
+
+def _implementation_digest(inputs):
+    h = hashlib.sha256()
+    files, versions = inputs
+    for name, path in files:
+        h.update(len(name).to_bytes(8, "big")); h.update(name)
+        h.update(hashlib.sha256(path.read_bytes()).digest())
+    for version in versions:
+        h.update(version)
     return h.hexdigest()
+
+
+def implementation_identity():
+    """Identify installed Python definitions and compiled native modules."""
+    return _implementation_digest(_implementation_inputs())
+
+
+class ImplementationSnapshot:
+    """A measured implementation, invalidated when its file inventory changes.
+
+    The digest is the ordinary implementation identity. File seals avoid hashing
+    unchanged shared libraries repeatedly; a changed seal triggers a full hash.
+    This is a process-local optimization, never a replacement archive identity.
+    """
+
+    @staticmethod
+    def _seal(inputs):
+        files, versions = inputs
+        rows = []
+        for name, path in files:
+            stat = path.stat()
+            rows.append((name, str(path), stat.st_dev, stat.st_ino, stat.st_size,
+                         stat.st_mtime_ns, stat.st_ctime_ns))
+        return tuple(rows), versions
+
+    def __init__(self):
+        inputs = _implementation_inputs()
+        before = self._seal(inputs)
+        self.identity = _implementation_digest(inputs)
+        if self._seal(_implementation_inputs()) != before:
+            raise ValueError("implementation changed during preparation")
+        self._stamp = before
+        self._inputs = inputs
+        self._directories = self._directory_inventory(inputs)
+        self._fast_stamp = self._fast_seal()
+        if self._seal(_implementation_inputs()) != before:
+            raise ValueError("implementation changed during preparation")
+
+    @staticmethod
+    def _directory_inventory(inputs):
+        from pathlib import Path
+        roots = {path.parents[max(0, len(Path(name.decode()).parts) - 2)]
+                 for name, path in inputs[0]}
+        return tuple(sorted({root for root in roots}
+            | {path for root in roots for path in root.rglob("*") if path.is_dir()}))
+
+    def _fast_seal(self):
+        inputs = self._inputs
+        rows = self._seal((inputs[0], _implementation_versions()))
+        directories = []
+        for path in self._directories:
+            stat = path.stat()
+            directories.append((str(path), stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns))
+        return rows, tuple(directories)
+
+    def check(self):
+        try:
+            fast_stamp = self._fast_seal()
+        except OSError as exc:
+            raise ValueError("prepared implementation changed; create a new preparation") from exc
+        if fast_stamp == self._fast_stamp:
+            return self.identity
+        inputs = _implementation_inputs()
+        stamp = self._seal(inputs)
+        if stamp != self._stamp:
+            if (_implementation_digest(inputs) != self.identity
+                    or self._seal(_implementation_inputs()) != stamp):
+                raise ValueError("prepared implementation changed; create a new preparation")
+            self._stamp = stamp
+        self._inputs = inputs
+        self._directories = self._directory_inventory(inputs)
+        self._fast_stamp = self._fast_seal()
+        if self._seal(_implementation_inputs()) != stamp:
+            raise ValueError("prepared implementation changed; create a new preparation")
+        return self.identity

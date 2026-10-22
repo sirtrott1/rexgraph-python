@@ -156,12 +156,19 @@ def install(register, OperatorSignature, TypePattern):
 
 def result_types(binding, values):
     from .planning import _carrier_literal
-    from .types import INTEGER, RATIONAL, BOOLEAN, UNKNOWN
+    from .types import INTEGER, RATIONAL, BOOLEAN, UNKNOWN, Domain
     from fractions import Fraction
     output = []
     for value in values:
         typed = value if isinstance(value, RCType) else _carrier_literal(binding, value)
         if not isinstance(typed, RCType):
-            typed = BOOLEAN if type(value) is bool else INTEGER if type(value) is int else RATIONAL if isinstance(value, Fraction) else UNKNOWN
+            if type(value) is str:
+                typed = RCType("Text", kind=ValueKind.TEXT, domain=Domain.METADATA,
+                               exactness=Exactness.STRUCTURAL)
+            elif type(value) is bytes:
+                typed = RCType("Bytes", kind=ValueKind.BYTES, domain=Domain.BYTES,
+                               exactness=Exactness.STRUCTURAL)
+            else:
+                typed = BOOLEAN if type(value) is bool else INTEGER if type(value) is int else RATIONAL if isinstance(value, Fraction) else UNKNOWN
         output.append(typed)
     return tuple(output)

@@ -103,8 +103,12 @@ def model_provider_inventory():
                      for _, provider in sorted(_model_providers.items()))
 
 
-def invoke_model_provider(provider, operation, *args, execution_context=None, **kwargs):
-    """Pass separately supplied authority only to a declared context operation."""
+def invoke_model_provider(provider, operation, /, *args, execution_context=None, **kwargs):
+    """Dispatch positionally, preserving provider keywords and separate authority.
+
+    A provider may declare its own ``operation`` keyword, for example the exact
+    field action selected at creation. It must reach the callback unchanged.
+    """
     if not isinstance(provider, ModelProvider):
         raise TypeError("model execution requires a ModelProvider")
     if operation not in _provider_operations:

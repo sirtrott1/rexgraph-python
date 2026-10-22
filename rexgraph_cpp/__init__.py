@@ -9,6 +9,7 @@ from ._stalk_boundary import PreparedGradedStalkTransport, graded_transport_buil
 from ._stalk_transport import PreparedStalkTransport, PreparedStalkTransportPattern, PreparedStalkTransportPatternBank, PreparedStalkTransportPatternTraining, PreparedStalkTransportPatternScope, stalk_transport_build_info, encode_stalk_column_tensor
 from ._model_storage import model_storage_build_info
 from ._field_program import PreparedFieldProgram, NativeFieldProgramResult, field_program_build_info
+from ._task_outcome import NativeTaskOutcome, task_goal_origin_payload, task_binding_origin_payload, task_outcome_build_info
 from ._known_tensor_square import (
     PreparedAvailableKnownTensorSquare, NativeAvailableKnownTensorSquare,
     NativeAvailableKnownTensorSquareInput, NativeAvailableKnownTensorSquareResult,
@@ -106,6 +107,7 @@ __all__ += ["PreparedRelationGuards", "PreparedDictionaryGuards", "guards_build_
 from ._channels import PreparedRelationalChannels, channels_build_info
 __all__ += ["PreparedRelationalChannels", "channels_build_info"]
 __all__ += ["model_storage_build_info"]
+__all__ += ["NativeTaskOutcome", "task_goal_origin_payload", "task_binding_origin_payload", "task_outcome_build_info"]
 __all__ += ["PreparedFieldProgram", "NativeFieldProgramResult", "field_program_build_info"]
 __all__ += ["PreparedAvailableKnownTensorSquare", "NativeAvailableKnownTensorSquare",
             "NativeAvailableKnownTensorSquareInput", "NativeAvailableKnownTensorSquareResult",

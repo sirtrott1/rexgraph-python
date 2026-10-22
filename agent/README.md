@@ -145,6 +145,155 @@ Chat reuses deterministic single document answers only when document state and
 retrieval parameters match. Live model generation and queries
 over mutable corpora or stores bypass the response cache.
 
+## Query records and execute programs
+
+Agent installs RCDB and RCQL as runtime dependencies. `RelationalSession` uses the
+same configured default store as the server. Pass an explicit store for an
+embedded application:
+
+```python
+from agent import RelationalSession
+from rexgraph import RexGraph
+
+session = RelationalSession()
+session.publish("example-data", RexGraph.from_cells([3, [[0, 1], [1, 2]]]),
+                expected_version=0)
+result = session.query(
+    'FROM RCDB_VERSION($db,"example-data",1) RETURN COUNT(CELLS(1)), SUM([1/3,2/7])',
+    save_as="example-answer")
+print(result.values)  # (2, Fraction(13, 21))
+```
+
+An expected version of 0 creates a new record. Use its current version to append
+a revision; a stale value refuses. The example ids must be unused on its first
+run. Queries are read-only by default. A mutation requires `allow_write=True`
+and an explicit `expected_version` in the query. Training also requires the
+write permission; source/provider availability rules still apply.
+
+Publish and execute finite programs through the same session:
+
+```python
+from fractions import Fraction
+
+session.publish_program("example-double", {
+    "name": "Double",
+    "inputs": [{"name": "x", "kind": "ExactRational"}],
+    "steps": [{"name": "twice", "query": "FROM $data RETURN SUM([$x,$x])"}],
+}, expected_version=0)
+result = session.run_program("example-double", version=1,
+    parameters={"x": Fraction(2, 3)},
+    sources={"data": {"record_id": "example-data", "version": 1}})
+print(result.values)  # (Fraction(4, 3),)
+```
+
+`sources` binds stored values under explicit aliases; omitted versions select
+the current version and execution records the version actually selected. `db`
+always names the session's governed store. `record_parameters` loads typed input
+records; its `kind` can be `value`, `program`, `name` or `recursive`. An optional
+`output` index selects a value from a saved canonical Result before decoding.
+The selected record/version/output identity remains in execution provenance. Python
+callers can also supply native values directly in `parameters`. Text is parsed
+by the session entry point, while the lower `RCQLRuntime.execute` continues to
+accept typed queries only.
+
+The publication tool can also use `value_record` with the same selector. For
+example, a query returning `NAME_RECORD(object)` can save its result, and
+`rexgraph_rcdb_publish` can publish output 0 as the named object's record. The
+record retains its parent result id, version, output and state digest. Subsequent
+queries restore that object through `record_parameters` without copying its
+coefficients into JSON. Repeating a stored operation uses the existing
+`NAME_ITERATE` or bounded recursive constructs under the same source policies.
+
+`transform_program` accepts the existing `specialize`, `input` and `step` rules,
+checks the candidate against supplied sources and validation parameters, and
+publishes a guarded revision. Its canonical transformation certificate is stored
+in that same program record. Historical versions remain executable.
+
+The shared capability registry exposes these operations directly to tools,
+Hive workers and remote clients:
+
+| Tool | Operation |
+| --- | --- |
+| `rexgraph_rcdb_list` | List visible records |
+| `rexgraph_rcdb_inspect` | Inspect a selected version and optional history |
+| `rexgraph_rcdb_publish` | Publish Core cells or a selected stored value with a version guard |
+| `rexgraph_rcql_query` | Execute a query or explicitly permitted mutation |
+| `rexgraph_rcql_publish_program` | Publish a finite program declaration |
+| `rexgraph_rcql_run_program` | Execute a selected program version |
+| `rexgraph_rcql_transform_program` | Validate and publish a certified program revision |
+
+Hive can own the execution sequence. Register capability workers and declare
+their dependencies with `WorkflowStep` and `WorkflowRef`:
+
+```python
+from agent.hive import Hive
+from agent.hive_workflow import WorkflowRef, WorkflowStep
+
+hive = Hive("query-team")
+hive.add_tools(names=["rexgraph_rcdb_inspect", "rexgraph_rcql_query"])
+workflow = hive.run_workflow([
+    WorkflowStep("inspect", "rexgraph_rcdb_inspect",
+                 {"record_id": "example-data", "version": 1}),
+    WorkflowStep("query", "rexgraph_rcql_query", {
+        "query": "FROM $data RETURN COUNT(CELLS(1))",
+        "sources": {"data": {
+            "record_id": WorkflowRef("inspect", ("record", "id")),
+            "version": WorkflowRef("inspect", ("record", "version")),
+        }},
+    }),
+])
+print(workflow.outputs["query"]["values"])
+```
+
+The coordinator schedules ready workers. References pass actual whole values
+or explicit mapping/sequence selections. Register a bounded model callback with
+`add_worker` to provide an input, choose an admitted operation or interpret a
+result; the model does not need to dispatch tools. A separate application worker
+can turn that checked decision into arguments for a registered query worker.
+Unknown workers and dependency cycles refuse before execution. Worker failures
+remain in `workflow.steps` and block dependent steps; independent work can finish.
+Scheduler failures do not automatically repeat mutations. Completed record writes
+remain committed: the workflow does not provide multi-record rollback. Outputs
+are in-process values; existing RCQL/RCDB codecs persist selected complete results.
+
+Register any selected operations using `hive.add_tools(names=[...], context=...)`.
+The existing `/rex/v1/call` and `/api/v1/mcp/call` routes invoke the same handlers.
+`RexClient` provides `rcdb_list`, `rcdb_inspect`, `rcdb_publish`, `rcql_query`,
+`rcql_publish_program`, `rcql_run_program` and `rcql_transform_program` through
+that existing transport. For example:
+
+```python
+from agent.client import RexClient
+
+client = RexClient("http://localhost:8000", api_key="TOKEN", workspace="default")
+reply = client.rcql_query(
+    'FROM RCDB_VERSION($db,"example-data",1) RETURN COUNT(CELLS(1))')
+print(reply["result"]["values"])
+```
+
+Tool parameters use JSON; exact fractions use
+`{"numerator": 2, "denominator": 3}`. Responses include a bounded `values`
+preview and, by default, `result_base64`. Decode the complete payload with
+`rcql.Result.from_bytes(base64.b64decode(payload))`. Native fields and object
+arrays are not expanded for the preview. A program result also retains complete
+intermediary values in `result.native_plan["step_results"]`, the program
+declaration, source dependencies, arithmetic and execution observations.
+
+`save_as` publishes the canonical result using RCDB's declared query-result
+codec. Native Memory, Local and SQLite stores support it. Legacy stores and
+stores whose immutable header excludes that codec refuse; they are not silently
+rewritten. Query execution and saving its result are separate operations. Each
+record publication uses the existing engine's version guard; the workflow does
+not provide a multi-record atomic transaction.
+
+Authenticated calls and context-bound Hive tools use the existing workspace
+store view, actor stamping, audit trail and cell admission limits. A caller
+cannot supply a store URI or arbitrary filesystem source through these tools.
+Outside a socket or explicit context, `RelationalSession` has the same trusted
+local-operator scope as the rest of Agent. Native model execution still requires
+its owning provider and runtime; this interface does not change model loaders,
+source cutoffs or transport contracts.
+
 ## The Hive
 
 `Hive.add_worker` registers a callable with a declared capability. Supported

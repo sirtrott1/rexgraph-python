@@ -170,12 +170,15 @@ def __getattr__(name):
     raise AttributeError(name)
 
 _PROGRAM_EXPORTS = {
+    "TaskOutcome": ("task_outcome", "TaskOutcome"),
     "Program": ("program", "Program"), "ProgramStep": ("program", "ProgramStep"),
     "ProgramInput": ("program", "ProgramInput"), "OutputRef": ("program", "OutputRef"),
     "ProgramResult": ("program", "ProgramResult"), "PlanTopology": ("plan_topology", "PlanTopology"),
     "PlanScheduler": ("scheduling", "PlanScheduler"), "QueryCancelledError": ("scheduling", "QueryCancelledError"),
     "SnapshotContext": ("source_context", "SnapshotContext"), "SourceSelection": ("source_context", "SourceSelection"),
-    "QueryCache": ("query_cache", "QueryCache"), "ReadoutEquivalence": ("readout_equivalence", "ReadoutEquivalence"),
+    "QueryCache": ("query_cache", "QueryCache"),
+    "PreparedQueryCache": ("prepared", "PreparedQueryCache"),
+    "ReadoutEquivalence": ("readout_equivalence", "ReadoutEquivalence"),
 }
 __all__ += list(_PROGRAM_EXPORTS)
 

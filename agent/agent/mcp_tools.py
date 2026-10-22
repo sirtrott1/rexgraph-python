@@ -19,6 +19,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from . import relational as _relational
+
 #: files accepted by the tools that read them. Named by handle rather than by path:
 #: a path is a name in the SERVER's namespace, so accepting one from the network is
 #: accepting a request to read any file the process can. See `server.handles`.
@@ -453,7 +455,76 @@ def _courier_deliver(source: str, dest: str, tags=None, ids=None,
     return c.deliver(source, dest, carry=spec)
 
 
+_RECORD_BINDINGS = {"type": "object", "description": "Source alias to a stored record_id and optional version.",
+    "additionalProperties": {"type": "object", "properties": {
+        "record_id": {"type": "string"}, "version": {"type": "integer", "minimum": 1}},
+        "required": ["record_id"], "additionalProperties": False}}
+_RECORD_PARAMETERS = {"type": "object", "description": "Parameter name to a stored record, restored through its declared codec.",
+    "additionalProperties": {"type": "object", "properties": {
+        "record_id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
+        "output": {"type": "integer", "minimum": 0, "description": "Select this value from a saved canonical Result before decoding."},
+        "kind": {"type": "string", "enum": ["value", "program", "name", "recursive"]}},
+        "required": ["record_id"], "additionalProperties": False}}
+_RELATIONAL_INPUTS = {
+    "parameters": {"type": "object", "description": "Input values. Exact rationals use {numerator: integer, denominator: integer}."},
+    "sources": _RECORD_BINDINGS, "record_parameters": _RECORD_PARAMETERS}
+_RELATIONAL_OUTPUTS = {
+    "save_as": {"type": "string", "description": "Save the complete canonical Result in this workspace's RCDB."},
+    "expected_version": {"type": "integer", "minimum": 0},
+    "include_payload": {"type": "boolean", "description": "Include base64 Result.to_bytes() for complete exact transport; default true."}}
+_PROGRAM_REFERENCE = {"type": "object", "properties": {
+    "step": {"type": "string"}, "output": {"type": "integer", "minimum": 0}},
+    "required": ["step"], "additionalProperties": False}
+_PROGRAM_REFERENCES = {"type": "object", "description": "Parameter or output name to an earlier step and output index.",
+    "additionalProperties": _PROGRAM_REFERENCE}
+_PROGRAM_DECLARATION = {"type": "object", "properties": {
+    "name": {"type": "string"},
+    "steps": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+        "name": {"type": "string"}, "query": {"type": "string"}, "inputs": _PROGRAM_REFERENCES},
+        "required": ["name", "query"], "additionalProperties": False}},
+    "inputs": {"type": "array", "description": "Open program inputs, separate from a step's output links.",
+        "items": {"type": "object", "properties": {
+            "name": {"type": "string"},
+            "kind": {"type": ["string", "null"], "description": "RCQL ValueKind, for example ExactRational or Text."},
+            "grade": {"type": ["integer", "null"], "minimum": 0},
+            "variance": {"type": ["string", "null"]}},
+            "required": ["name"], "additionalProperties": False}},
+    "outputs": _PROGRAM_REFERENCES},
+    "required": ["name", "steps"], "additionalProperties": False}
+
 TOOLS: dict[str, Tool] = {t.name: t for t in [
+    Tool("rexgraph_rcdb_list", "List record identities, versions and structural metadata in the caller's Agent store.",
+         {"limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+          "offset": {"type": "integer", "minimum": 0}},
+         _relational.records, reads_files=False, wants_context=True),
+    Tool("rexgraph_rcdb_inspect", "Inspect a selected RCDB record's metadata, exact state digest and optional visible revision history.",
+         {"record_id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
+          "history": {"type": "boolean"}}, _relational.inspect, required=["record_id"],
+         reads_files=False, wants_context=True),
+    Tool("rexgraph_rcdb_publish", "Publish a guarded complex or finite value from Core cells or an existing record/result output. Select exactly one of cells and value_record. Native query results retain their canonical storage codec.",
+         {"record_id": {"type": "string"}, "cells": {"type": "array", "description": "Core from_cells declaration, e.g. [3, [[0,1], [1,2]]]."},
+          "value_record": _RECORD_PARAMETERS["additionalProperties"],
+          "expected_version": {"type": "integer", "minimum": 0}, "meta": {"type": "object"}},
+         _relational.publish, required=["record_id", "expected_version"], reads_files=False, wants_context=True),
+    Tool("rexgraph_rcql_query", "Execute RCQL against the caller's Agent RCDB and explicitly selected records. Read-only by default. Returns a bounded preview and complete canonical Result bytes; mutations require allow_write and return commit receipts.",
+         {"query": {"type": "string"}, **_RELATIONAL_INPUTS, **_RELATIONAL_OUTPUTS,
+          "allow_write": {"type": "boolean", "description": "Explicitly permit mutations/training under the existing workspace policy."}},
+         _relational.query, required=["query"], reads_files=False, wants_context=True),
+    Tool("rexgraph_rcql_publish_program", "Publish a finite typed RCQL Program as a guarded RCDB revision. Steps contain name, query text and optional input links; public inputs use ProgramInput declarations.",
+         {"record_id": {"type": "string"}, "expected_version": {"type": "integer", "minimum": 0},
+          "declaration": _PROGRAM_DECLARATION},
+         _relational.publish_program, required=["record_id", "declaration", "expected_version"], reads_files=False, wants_context=True),
+    Tool("rexgraph_rcql_run_program", "Restore and run a selected stored Program through Agent's typed RCQL runtime. Source versions, operation traces and complete outputs remain in the canonical result.",
+         {"record_id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
+          **_RELATIONAL_INPUTS, **_RELATIONAL_OUTPUTS,
+          "allow_write": {"type": "boolean"}},
+         _relational.run_program, required=["record_id"], reads_files=False, wants_context=True),
+    Tool("rexgraph_rcql_transform_program", "Verify and compile a stored Program transformation, then publish its next guarded revision with the canonical certificate in that same record. Validation parameters describe the candidate's open ports.",
+         {"record_id": {"type": "string"}, "version": {"type": "integer", "minimum": 1},
+          "rule": {"type": "string", "enum": ["specialize", "input", "step"]},
+          "arguments": {"description": "Capture mapping for specialize; [old, new] for input or step renaming.", "type": ["object", "array"]},
+          **_RELATIONAL_INPUTS}, _relational.transform_program,
+         required=["record_id", "version", "rule", "arguments"], reads_files=False, wants_context=True),
     Tool("rexgraph_join_sources",
          "Join ontology, annotation, structure and schema files into one relational "
          "complex on the cross-references the files themselves declare. Reports which "

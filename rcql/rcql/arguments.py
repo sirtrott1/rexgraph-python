@@ -7,6 +7,12 @@ No numeric package or execution adapter is imported to parse or build a query.
 from __future__ import annotations
 
 EXPRESSION_ARGUMENTS = {
+    'TASK_OUTCOME': (('output', 'task', 'asset', 'binding', 'execution_context'), ()),
+    'TASK_STATUS': (('outcome', 'execution_context'), ()),
+    'TASK_VERDICT': (('outcome', 'execution_context'), ()),
+    'TASK_INFO': (('outcome', 'execution_context'), ()),
+    'TASK_CERTIFICATE': (('outcome', 'execution_context'), ()),
+    'TASK_FIELD': (('outcome', 'node', 'execution_context', 'occurrences'), (False,)),
     'COUNT': (('values',), ()),
     'SUM': (('values',), ()),
     'MEAN': (('values',), ()),

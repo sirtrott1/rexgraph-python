@@ -120,6 +120,25 @@ cdef object _branch_info(FiniteBranchInfo value):
             'affine':bool(value.affine),'assignment':tuple(value.assignment)}
 
 
+cdef object _solve_source(NativeFiniteSource source, fixed, max_variables, max_steps, max_entries, bint propagate):
+    cdef shared_ptr[FiniteSourceBridge] owner=source._pin()
+    cdef size_t variables=_natural(max_variables),steps=_natural(max_steps),entries=_natural(max_entries)
+    cdef vector[FiniteAssignmentValue] assignments
+    cdef FiniteAssignmentValue row
+    cdef FiniteSearchInfo result
+    for item in fixed:
+        if len(item)!=3:raise ValueError('fixed finite value requires grade, cell index and symbol')
+        if assignments.size()>=variables:raise ValueError('fixed finite values exceed variable admission')
+        row.grade=_natural(item[0]);row.cell=_natural(item[1]);row.symbol=_natural(item[2]);assignments.push_back(row)
+    with nogil:result=owner.get().solve(assignments,variables,steps,entries,propagate)
+    return {'status':('satisfiable','unsatisfiable','budget_exceeded','cancelled')[result.status],
+        'witness':tuple((v.grade,v.cell,v.symbol) for v in result.witness) if result.has_witness else None,
+        'work':{'steps':result.steps,'value_trials':result.value_trials,'chart_tests':result.chart_tests,
+            'tuple_tests':result.tuple_tests,'coordinate_tests':result.coordinate_tests,
+            'variables':result.variables,'peak_assigned':result.peak_assigned,'peak_entries':result.peak_entries,
+            'domain_reductions':result.domain_reductions,'search_nodes':result.search_nodes}}
+
+
 cdef class NativeFiniteSource:
     cdef shared_ptr[FiniteSourceBridge] _pin(self) except *:
         if self._handle.get()==NULL:raise RuntimeError('raw finite source is not initialized')
@@ -174,6 +193,22 @@ cdef class NativeFiniteSource:
         cdef NativeFiniteSections out=NativeFiniteSections.__new__(NativeFiniteSections)
         with nogil:out._handle=owner.get().sections()
         out._limits=self._limits;out._maximum=self._maximum;return out
+
+    def bounded_global_section(self, fixed=(), *, max_variables=65536, max_steps=4194304):
+        """Return one exact witness, refutation or budget status on this source.
+
+        Fixed entries and witnesses are (grade, cell index, symbol) triples.
+        One witness does not establish uniqueness or enumerate the whole family.
+        """
+        return _solve_source(self,fixed,max_variables,max_steps,0,False)
+
+    def propagated_global_section(self, fixed=(), *, max_variables=65536, max_steps=4194304, max_entries=16777216):
+        """Restrict local tuple supports before exact native branch search.
+
+        max_entries admits logical scratch slots, excluding retained source and
+        allocator costs. Budget exhaustion returns neither a witness nor UNSAT.
+        """
+        return _solve_source(self,fixed,max_variables,max_steps,max_entries,True)
 
 
 cdef class NativeFiniteSections:

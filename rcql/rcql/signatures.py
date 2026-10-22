@@ -1663,3 +1663,11 @@ def _install_phase_fold_signatures(register):
 
 
 _install_phase_fold_signatures(register)
+
+def _install_task_signatures(register):
+    from .task_operators import install_signatures
+
+    install_signatures(register)
+
+
+_install_task_signatures(register)

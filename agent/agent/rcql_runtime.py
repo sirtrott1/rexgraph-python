@@ -62,7 +62,8 @@ class RCQLRuntime:
             bound = dict(self._sources)
         return Executor(sources=bound, params=params).execute(query)
 
-    def execute_program(self, program, *, params=None, explain=False, scheduler=None, evidence=None):
+    def execute_program(self, program, *, params=None, explain=False, scheduler=None, evidence=None,
+                        cache=None, exactness="declared"):
         """Run a finite typed program under the current source policies."""
         from rcql import Program
         if not isinstance(program, Program):
@@ -70,7 +71,8 @@ class RCQLRuntime:
         with self._lock:
             bound = dict(self._sources)
         return Executor(sources=bound, params=params, scheduler=scheduler,
-                        evidence=evidence).execute_program(program, explain=explain)
+                        evidence=evidence, exactness=exactness).execute_program(
+                            program, explain=explain, cache=cache)
 
     def execute_recursive(self, program, entry, arguments, *, source, limits=None,
                           history=True, memoize=True, explain=False, evidence=None):
@@ -83,3 +85,15 @@ class RCQLRuntime:
 
 
 rcql_runtime = RCQLRuntime()
+
+
+def __getattr__(name):
+    """Keep the root Agent runtime shortcut usable after a submodule import.
+
+    Python assigns this module to agent.rcql_runtime when it is imported. Both
+    that module and the lazy root export therefore expose the same singleton's
+    public operations, regardless of import order.
+    """
+    if name in {"register", "remove", "sources", "execute", "execute_program", "execute_recursive"}:
+        return getattr(rcql_runtime, name)
+    raise AttributeError(name)

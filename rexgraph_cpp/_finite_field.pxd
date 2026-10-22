@@ -28,6 +28,15 @@ cdef extern from "finite_field_bridge.hpp" namespace "rexgraph::python" nogil:
         vector[FiniteVariable] variables
         vector[FiniteChart] charts
         vector[FiniteBinding] bindings
+    cdef cppclass FiniteAssignmentValue:
+        size_t grade, cell
+        uint64_t symbol
+    cdef cppclass FiniteSearchInfo:
+        unsigned status
+        cppbool has_witness
+        vector[FiniteAssignmentValue] witness
+        size_t steps, value_trials, chart_tests, tuple_tests, coordinate_tests
+        size_t variables, peak_assigned, peak_entries, domain_reductions, search_nodes
     cdef cppclass FiniteTarget:
         shared_ptr[FieldProgramBridge] fixed
         shared_ptr[FieldEvidenceBridge] affine
@@ -60,6 +69,7 @@ cdef extern from "finite_field_bridge.hpp" namespace "rexgraph::python" nogil:
         shared_ptr[InputUseAssetBridge] asset() except +
         cppbool same_owner(const FiniteSourceBridge&) except +
         shared_ptr[FiniteSectionsBridge] sections() except +
+        FiniteSearchInfo solve(const vector[FiniteAssignmentValue]&, size_t, size_t, size_t, cppbool) except +
     cdef cppclass FiniteSectionsBridge:
         shared_ptr[FiniteSourceBridge] source() except +
         size_t size() except +

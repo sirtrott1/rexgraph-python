@@ -278,7 +278,7 @@ def _chat_full(url: str, model: str, prompt: str | None, system: str | None = No
                max_tokens: int = 512, temperature: float = 0.3, timeout: float = 120.0,
                *, messages: list[dict] | None = None, tools: list[dict] | None = None,
                tool_choice=None, chat_template_kwargs: dict | None = None,
-               api_key_ref: str = "") -> ChatResult | None:
+               response_format: dict | None = None, api_key_ref: str = "") -> ChatResult | None:
     """Call one bee's OpenAI compatible /v1/chat/completions and return the FULL structured reply.
 
     `messages` sends a complete history verbatim (the assistant turn carrying tool_calls plus the
@@ -313,6 +313,8 @@ def _chat_full(url: str, model: str, prompt: str | None, system: str | None = No
         payload["tool_choice"] = tool_choice
     if chat_template_kwargs:
         payload["chat_template_kwargs"] = chat_template_kwargs
+    if response_format is not None:
+        payload["response_format"] = response_format
 
     headers = {}
     key = ""
@@ -431,6 +433,60 @@ class Hive:
         _act.record("worker:" + name, "deploy", detail={"type": bee.worker_type, "capability": capability})
         return bee
 
+    def add_program(self, name: str, session, record_id: str, *, version: int, sources,
+                    cache=None, runtime_parameters=None) -> Bee:
+        """Expose a pinned RCQL program as an ordinary capability worker.
+
+        ``runtime_parameters`` maps declared input names to zero-argument
+        resolvers called on every invocation. These registration-owned bindings
+        supply current live resources such as native availability contexts;
+        neither resolvers nor resolved resources are program captures or task
+        inputs. Callers cannot override their names. The program still checks
+        its input contracts and native execution checks current availability.
+        """
+        from rcql import Program
+
+        from .relational import RelationalSession
+        if not isinstance(session, RelationalSession) or type(version) is not int or version < 1:
+            raise TypeError("a program worker requires a session and explicit positive version")
+        program = Program.from_record(session.read(record_id, version).value)
+        from collections.abc import Mapping
+
+        if runtime_parameters is not None and not isinstance(runtime_parameters, Mapping):
+            raise TypeError("runtime parameters require a mapping of declared inputs to resolvers")
+        resolvers = tuple((runtime_parameters or {}).items())
+        inputs = {spec.name for spec in program.inputs}
+        if any(key not in inputs or not callable(resolve) for key, resolve in resolvers):
+            raise ValueError("runtime parameters require declared program inputs and callable resolvers")
+        runtime_names = frozenset(key for key, _ in resolvers)
+        # Copy the finite selectors; later caller mutation cannot silently rebind
+        # a worker whose name and implementation were already registered.
+        from rcql.program_codec import dumps, loads
+        selectors = dumps(sources)
+        if any(set(v) != {"record_id", "version"} or type(v["version"]) is not int
+               or v["version"] < 1 for v in sources.values()):
+            raise ValueError("program worker sources require explicit positive versions")
+
+        def handler(data):
+            parameters = dict(data or {})
+            if runtime_names.intersection(parameters):
+                raise ValueError("caller parameters overlap registration-owned runtime inputs")
+            parameters.update((key, resolve()) for key, resolve in resolvers)
+            return session.run_program(record_id, version=version, sources=loads(selectors),
+                                       parameters=parameters, cache=cache, exactness="exact",
+                                       bind_record_sources=True)
+        return self.add_worker(name, handler, capability="analyze",
+                               worker_type="program:rcql", context=session.context)
+
+    def add_machine(self, name: str, machine) -> Bee:
+        """Expose a persistent RCQL machine transition through Hive invocation."""
+        from .machine import RelationalMachine
+        if not isinstance(machine, RelationalMachine):
+            raise TypeError("add_machine requires a RelationalMachine")
+        machine.inspect()
+        return self.add_worker(name, lambda data: machine.advance(**data), capability="transform",
+                               worker_type="machine:rcql", context=machine.session.context)
+
     def add_model(self, name: str, checkpoint, *, capability: str = "predict",
                   specialties=None, device: str = "cpu", worker_type: str = "") -> Bee:
         """Register a trained model as a worker. A convenience over add_worker whose handler runs
@@ -496,6 +552,18 @@ class Hive:
         transform/generate)."""
         return [b.name for b in self._bees.values()
                 if b.capability == capability and b.role != "embedder"]
+
+    def run_workflow(self, steps, *, sender: str = "user"):
+        """Orchestrate declared capability-worker dependencies and retain whole outputs.
+
+        Accepts WorkflowStep objects or their mappings. WorkflowRef values name
+        earlier results, including named RCQL Result outputs. Explicit guards
+        and checks run observation workers before and after each task. Rejected
+        or unresolved obligations block dependents while retaining all outputs.
+        Model callbacks, queries and mutations execute as registered workers.
+        """
+        from .hive_workflow import run_workflow
+        return run_workflow(self, steps, sender=sender)
 
     def dispatch_capability(self, capability: str, data, *, hint: str = None,
                             sender: str = "user") -> dict:
@@ -773,6 +841,7 @@ class Hive:
                  sender: str = "user", system: str | None = None, max_tokens: int = 512,
                  temperature: float = 0.3, tools=None, tool_choice=None,
                  chat_template_kwargs: dict | None = None,
+                 response_format: dict | None = None,
                  record: bool = True) -> ChatResult | None:
         """Ask one bee and get its FULL reply (content + tool_calls + finish_reason +
         reasoning_content) instead of just text: the path a tool calling harness drives.
@@ -781,6 +850,10 @@ class Hive:
         verbatim so the assistant's tool_calls turn and the `role: tool` results can be fed back
         to close a tool loop. ask() is unchanged and still returns a bare string, so every
         existing caller (dispatch/collaborate/consensus/guarded_ask) is unaffected.
+
+        `response_format` forwards a backend's declared JSON or JSON-schema output
+        contract. The backend performs constrained decoding; callers still validate
+        returned values before dispatching operations.
 
         Only the text of a reply is relayed into the complex; a tool call turn has no prose, so
         the recorded message names the tools requested and the topology still sees the exchange."""
@@ -797,6 +870,7 @@ class Hive:
             res = _chat_full(bee.url, bee.model, prompt, system=system, max_tokens=max_tokens,
                              temperature=temperature, messages=messages, tools=tools,
                              tool_choice=tool_choice, chat_template_kwargs=chat_template_kwargs,
+                             response_format=response_format,
                              api_key_ref=bee.api_key_ref)
         finally:
             _act.close_use(_use)
@@ -904,10 +978,11 @@ class Hive:
         cs = coordinator_settings()
         return float(cs.task_weights.get(kind, 1.0)) * float(cs.worker_weights.get(worker, 1.0))
 
-    def _run_wave(self, tasks: list) -> dict:
+    def _run_wave(self, tasks: list, *, serial_fallback: bool = True) -> dict:
         """Dispatch a wave of {id, kind, fn, weight?} tasks through the coordinator, folding timings
-        into its cost model. never raises: on any failure (or when the coordinator is disabled) it
-        runs the fns serially. Emits a journal event with placement and timings (no content)."""
+        into its cost model. Serial fallback is the default; callers executing mutations
+        disable it so a scheduler error cannot repeat a successful write. A disabled
+        coordinator executes serially. Emits placement/timings, without task content."""
         from . import activity
         from .coordinator_adapter import work_units
         from .hive_config import coordinator_settings
@@ -937,6 +1012,8 @@ class Hive:
                                         "kinds": {t["id"]: t.get("kind", "") for t in tasks}})
             return results
         except Exception as ex:
+            if not serial_fallback:
+                raise
             logger.warning("coordinator wave failed, serial fallback: %s", ex)
             return _serial(tasks)
 

@@ -34,18 +34,16 @@ __all__ = [
     "Session",
     "DecisionEngine",
     "rcql_runtime",
+    "RelationalSession",
 ]
 
 
 def __getattr__(name):
-    """Bind the RCQL runtime on first use.
-
-    rexgraph-rcql is a separate distribution and an optional extra, so importing the
-    agent must not require it. It is reached here rather than at module scope so an
-    install without the extra still works and only a caller that actually asks for the
-    runtime sees the ImportError.
-    """
+    """Load the integrated query and record interfaces on first use."""
     if name == "rcql_runtime":
         from .rcql_runtime import rcql_runtime
         return rcql_runtime
+    if name == "RelationalSession":
+        from .relational import RelationalSession
+        return RelationalSession
     raise AttributeError(name)

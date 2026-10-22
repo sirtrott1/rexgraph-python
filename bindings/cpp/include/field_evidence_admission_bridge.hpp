@@ -223,6 +223,8 @@ private:
 };
 class AvailableAffineBridge {
 public:
+    const rfc::learning::AvailableRelationalAffineResult& native_owner() const & { return *owner_; }
+    const rfc::learning::AvailableRelationalAffineResult& native_owner() const && = delete;
     static std::shared_ptr<AvailableAffineBridge> adopt(rfc::learning::AvailableRelationalAffineResult owner,
             const std::vector<std::size_t>& bounds, std::size_t maximum) {
         return std::shared_ptr<AvailableAffineBridge>(new AvailableAffineBridge(std::move(owner), bounds, maximum));

@@ -16,6 +16,14 @@ struct FiniteDeclaration {
     std::vector<FiniteSymbol> symbols; std::vector<FiniteVariable> variables;
     std::vector<FiniteChart> charts; std::vector<FiniteBinding> bindings;
 };
+struct FiniteAssignmentValue { std::size_t grade{}, cell{}; std::uint64_t symbol{}; };
+struct FiniteSearchInfo {
+    unsigned status{};
+    bool has_witness{};
+    std::vector<FiniteAssignmentValue> witness;
+    std::size_t steps{}, value_trials{}, chart_tests{}, tuple_tests{}, coordinate_tests{};
+    std::size_t variables{}, peak_assigned{}, peak_entries{}, domain_reductions{}, search_nodes{};
+};
 struct FiniteTarget {
     std::shared_ptr<FieldProgramBridge> fixed;
     std::shared_ptr<FieldEvidenceBridge> affine;
@@ -100,6 +108,27 @@ public:
     std::shared_ptr<InputUseAssetBridge> asset() const {return InputUseAssetBridge::adopt(owner_->asset(),bounds_,maximum_);}
     bool same_owner(const FiniteSourceBridge& other) const {return owner_->same_owner(*other.owner_);}
     std::shared_ptr<FiniteSectionsBridge> sections() const;
+    FiniteSearchInfo solve(const std::vector<FiniteAssignmentValue>& fixed,
+            std::size_t variables, std::size_t steps, std::size_t entries, bool propagate) const {
+        rfc::inference::OwnedRelationalFiniteSource::Assignment assignment;
+        for (const auto& row : fixed) {
+            if (!assignment.emplace(program_bridge_detail::cell(row.grade,row.cell),row.symbol).second)
+                throw std::invalid_argument("duplicate fixed finite cell");
+        }
+        const rfc::local::FiniteSearchLimits limits{variables,steps,entries};
+        const auto result = propagate ? owner_->propagated_global_section(assignment,limits)
+                                      : owner_->bounded_global_section(assignment,limits);
+        const auto& w = result.work;
+        FiniteSearchInfo out;
+        out.status=static_cast<unsigned>(result.status);out.has_witness=result.witness.has_value();
+        if (result.witness) for (const auto& variable : owner_->declaration().variables)
+            out.witness.push_back({variable.cell.grade.value,variable.cell.index,result.witness->at(variable.cell)});
+        out.steps=w.steps;out.value_trials=w.value_trials;out.chart_tests=w.chart_tests;
+        out.tuple_tests=w.tuple_tests;out.coordinate_tests=w.coordinate_tests;
+        out.variables=w.variables;out.peak_assigned=w.peak_assigned;out.peak_entries=w.peak_entries;
+        out.domain_reductions=w.domain_reductions;out.search_nodes=w.search_nodes;
+        return out;
+    }
 private:
     FiniteSourceBridge(rfc::inference::OwnedRelationalFiniteSource value,std::vector<std::size_t> bounds,std::size_t maximum)
         :owner_(std::make_shared<const rfc::inference::OwnedRelationalFiniteSource>(std::move(value))),bounds_(std::move(bounds)),maximum_(maximum) {}

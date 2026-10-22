@@ -289,6 +289,7 @@ class ValueKind(str, Enum):
     PROGRAM_ASSEMBLY = "ProgramAssembly"
     PROGRAM_FAMILY = "ProgramFamily"
     PROGRAM_EVOLUTION = "ProgramEvolution"
+    TASK_OUTCOME = "TaskOutcome"
 
     # cells
     CELL = "Cell"

@@ -1562,3 +1562,11 @@ def _install_phase_fold_operators(register):
 
 
 _install_phase_fold_operators(register)
+
+def _install_task_operators(register):
+    from .task_operators import install
+
+    install(register)
+
+
+_install_task_operators(register)

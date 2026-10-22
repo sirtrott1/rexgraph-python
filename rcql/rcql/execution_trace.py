@@ -21,9 +21,15 @@ def current_query_resources():
 
 
 @contextmanager
-def query_resource_scope():
-    """Retain adapter owners only for the current query, including its validation."""
-    token = _QUERY_RESOURCES.set({})
+def query_resource_scope(*, resources=None):
+    """Retain actual adapter owners through a query or an explicit preparation.
+
+    Nested program steps share their enclosing preparation. A standalone query
+    still releases its resources when it returns.
+    """
+    current = _QUERY_RESOURCES.get()
+    token = _QUERY_RESOURCES.set(resources if resources is not None else
+                                 current if current is not None else {})
     try:
         yield
     finally:

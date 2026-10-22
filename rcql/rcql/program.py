@@ -1,12 +1,12 @@
 """Reusable finite RCQL programs over explicitly bound native sources."""
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace, field, is_dataclass
-from collections.abc import Mapping
 import re
+from collections.abc import Mapping
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 
-from .ast import Query, Parameter, Literal, Call
-from .program_codec import dumps, loads, digest, operators
+from .ast import Call, Literal, Parameter, Query
+from .program_codec import digest, dumps, loads, operators
 
 
 def _name(value):
@@ -76,8 +76,8 @@ class ProgramInput:
             raise ValueError("input grade must be a nonnegative integer")
 
     def validate(self, binding, value):
-        from .types import RCType
         from .program_contracts import result_types
+        from .types import RCType
         typed = result_types(binding, (value,))[0]
         if any(v is not None for v in (self.kind, self.grade, self.variance)):
             if not isinstance(typed, RCType):
@@ -337,13 +337,22 @@ class Program:
             raise ValueError("record must contain one declared RCQL program")
         return cls.from_bytes(values[0])
 
-    def execute(self, executor, *, explain=False):
-        from .executor import Executor
+    def execute(self, executor, *, explain=False, cache=None):
+        from .execution_trace import query_resource_scope
+        with query_resource_scope():
+            return self._execute(executor, explain=explain, cache=cache)
+
+    def _execute(self, executor, *, explain=False, cache=None):
         from .capabilities import BoundSource
-        from .types import RCType
+        from .executor import Executor
         from .native_plan import plain
+        from .types import RCType
         if not isinstance(executor, Executor):
             raise TypeError("a program requires the native Executor")
+        if cache is not None:
+            from .query_cache import QueryCache
+            if not isinstance(cache, QueryCache) or explain:
+                raise TypeError("program reuse requires QueryCache and an executable program")
         declaration = self.coefficient_digest
         parameters = dict(executor.params)
         required = {v.name for v in self.inputs}
@@ -390,9 +399,13 @@ class Program:
                 from .capabilities import SourcePolicy
                 if SourcePolicy.intersection(source.policy, *(b.source.policy for b in dependency_bindings)).digest != source.policy.digest:
                     raise PermissionError("bind program sources under the dependency intersection policy")
-            child = Executor(sources={"program_source": source}, params=supplied,
+            # A calculation depends on its declared ports, not unrelated inputs
+            # of the surrounding program. Linked values retain their full owners.
+            ports = tuple(sorted(set(_parameters(step.query)) & supplied.keys()))
+            child = Executor(sources={"program_source": source},
+                             params={key: supplied[key] for key in ports},
                              artifacts=executor.artifacts, scheduler=executor.scheduler,
-                             evidence=executor.evidence)
+                             evidence=executor.evidence, exactness=executor.exactness_policy)
             query = replace(step.query, source=Parameter("program_source"), explain=explain)
             binding = child._planning_binding(query.source, source)
             for spec in self.inputs:
@@ -410,14 +423,16 @@ class Program:
                 explanations.append((step.name, detail))
                 from .executor import Result
                 if step.query.matches:
-                    from .types import ValueKind, Exactness
+                    from .types import Exactness, ValueKind
                     result_by_name[step.name] = Result((RCType("QueryTable", kind=ValueKind.QUERY_TABLE,
                                                               exactness=Exactness.STRUCTURAL),))
                 else:
                     result_by_name[step.name] = Result(tuple(e.result for e in plan.returns))
             else:
                 try:
-                    result_by_name[step.name] = child.execute(query)
+                    result = child.execute(query) if cache is None else child.execute_cached(query, cache)
+                    result_by_name[step.name] = replace(result, native_plan={
+                        **(result.native_plan or {}), "program_input_ports": ports})
                 except Exception as exc:
                     note = getattr(exc, "add_note", None)
                     if callable(note):
@@ -436,10 +451,14 @@ class Program:
         refs = tuple(plain({"state_digest": s.ref.state_digest, "record_id": s.ref.record_id,
                            "record_version": s.ref.record_version, "policy_digest": s.policy.digest})
                      for s in selected.values())
+        from rexgraph.graph import RexGraph
         from rexgraph.tensor_field import FieldSource
+
         from .source_context import field_references
+        # Only mathematical snapshots are field dependencies. A live store is
+        # a selection service; its reads retain their selected record receipts.
         dependencies = tuple(FieldSource(s.value, s.ref.record_id, s.ref.record_version, s.ref.state_digest)
-                             for s in selected.values())
+                             for s in selected.values() if isinstance(s.value, RexGraph))
         dependencies += tuple(FieldSource(b.value, b.ref.record_id, b.ref.record_version,
                                           b.ref.state_digest) for b in dependency_bindings)
         dependencies += field_references(tuple(result.values for result in result_by_name.values()))

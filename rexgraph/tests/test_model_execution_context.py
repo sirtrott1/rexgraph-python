@@ -157,3 +157,22 @@ def test_context_operation_declarations_copy_caller_metadata():
         invoke_model_provider(object(), "infer")
     with pytest.raises(ValueError, match="unknown"):
         invoke_model_provider(provider, "__dict__", execution_context=object())
+
+
+@pytest.mark.parametrize("contextual", [False, True])
+def test_provider_operation_configuration_does_not_replace_dispatch(contextual):
+    calls = []
+    authority = object()
+
+    def create(source, *, operation, **kwargs):
+        calls.append((source, operation, kwargs))
+        return operation
+
+    provider = ModelProvider("operation_fixture", "1", (("operation_fixture", "1"),),
+                             lambda *a: None, create=create,
+                             context_operations=("create",) if contextual else ())
+    context = authority if contextual else None
+    # This is the provider's mathematical operation, not a second dispatch selector.
+    assert invoke_model_provider(provider, "create", "source", operation="restore",
+                                 execution_context=context) == "restore"
+    assert calls == [("source", "restore", {"execution_context": authority} if contextual else {})]

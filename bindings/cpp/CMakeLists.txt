@@ -518,5 +518,22 @@ target_compile_definitions(_available_literal_field_family PRIVATE RFC_ENGINE_DI
   RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_AVAILABLE_LITERAL_FIELD_FAMILY_BINDING_DIGEST="${available_literal_field_family_digest}")
 install(TARGETS _available_literal_field_family LIBRARY DESTINATION rexgraph_cpp)
 
+set(task_outcome_sources include/task_outcome_bridge.hpp ${field_evidence_admission_sources}
+  ${known_tensor_graph_sources} ${rexgraph_python_source_dir}/_task_outcome.pyx
+  ${rexgraph_python_source_dir}/_task_outcome.pxd)
+rexgraph_binding_receipt(task_outcome_digest ${task_outcome_sources})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${task_outcome_sources})
+set(task_outcome_output "${CMAKE_CURRENT_BINARY_DIR}/_task_outcome.cpp")
+add_custom_command(OUTPUT "${task_outcome_output}"
+  COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${task_outcome_output}"
+    "${rexgraph_python_source_dir}/_task_outcome.pyx"
+  DEPENDS ${task_outcome_sources} VERBATIM)
+Python3_add_library(_task_outcome MODULE WITH_SOABI "${task_outcome_output}")
+target_include_directories(_task_outcome PRIVATE include)
+target_link_libraries(_task_outcome PRIVATE rfc::learning rfc::inference rfc::storage)
+target_compile_definitions(_task_outcome PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}"
+  RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_TASK_OUTCOME_BINDING_DIGEST="${task_outcome_digest}")
+install(TARGETS _task_outcome LIBRARY DESTINATION rexgraph_cpp)
+
 install(DIRECTORY "${rexgraph_python_source_dir}/" DESTINATION rexgraph_cpp
   FILES_MATCHING PATTERN "*.py" PATTERN "*.pyx" PATTERN "*.pxd" PATTERN "*.pxi")

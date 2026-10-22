@@ -145,7 +145,7 @@ def test_chat_full_accepts_full_message_history(monkeypatch):
 def test_chat_full_omits_optional_fields_when_unset(monkeypatch):
     cap = _stub_http(monkeypatch, _TEXT_RESPONSE)
     hive._chat_full("http://bee", "m", "hi")
-    for k in ("tools", "tool_choice", "chat_template_kwargs"):
+    for k in ("tools", "tool_choice", "chat_template_kwargs", "response_format"):
         assert k not in cap["json"]
 
 
@@ -182,6 +182,25 @@ def test_ask_full_returns_structured_result(monkeypatch):
     assert cap["json"]["tools"] == _TOOLS
     assert res.finish_reason == "tool_calls"
     assert res.tool_calls[0]["function"]["name"] == "read_file"
+
+
+def test_ask_full_forwards_schema_to_backend_and_retains_response(monkeypatch):
+    response = {"choices": [{"finish_reason": "stop", "message": {
+        "role": "assistant", "content": '{"operation":"inspect"}'}}]}
+    cap = _stub_http(monkeypatch, response)
+    h = hive.get_hive()
+    h.attach("planner", "http://bee", role="worker", model="m")
+    output_format = {"type": "json_schema", "json_schema": {
+        "name": "operation", "strict": True, "schema": {
+            "type": "object", "properties": {"operation": {
+                "type": "string", "enum": ["inspect", "unknown"]}},
+            "required": ["operation"], "additionalProperties": False}}}
+    result = h.ask_full("planner", "Inspect the supplied source.",
+                        response_format=output_format)
+    assert cap["json"]["response_format"] == output_format
+    assert json.loads(result.content) == {"operation": "inspect"}
+    assert result.raw == response
+    assert result.finish_reason == "stop"
 
 
 # authentication: a credential is resolved per call, never stored

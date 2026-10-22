@@ -43,10 +43,12 @@ def _component_codecs():
     from rexgraph.model_codec import MODEL_VALUES, pack_model, unpack_model
     from rexgraph.span import SpanAttachment
     from rexgraph.span_codec import pack_attachment, unpack_attachment
+    from .task_outcome import TaskOutcome, pack_task_outcome
     return {"field": (FIELD_VALUES, pack_field, unpack_field),
             "section": (SECTION_VALUES, pack_section, unpack_section),
             "model": (MODEL_VALUES, pack_model, unpack_model),
-            "span": ((SpanAttachment,), pack_attachment, unpack_attachment)}
+            "span": ((SpanAttachment,), pack_attachment, unpack_attachment),
+            "task": ((TaskOutcome,), pack_task_outcome, TaskOutcome.from_record)}
 
 
 @lru_cache(maxsize=1)
@@ -62,6 +64,12 @@ def bind_sources(value, references, *, strict=False):
     """Rebind checked retained source declarations, preserving their identities."""
     from rexgraph.tensor_field import FieldSource
     from rexgraph.selection import Selection
+    from .task_outcome import TaskOutcome
+    if isinstance(value, TaskOutcome):
+        # Its complete native archive owns these C++ publications. They are
+        # admitted under current native authority on use, never rebound to a
+        # selected Python RexGraph snapshot by dataclass traversal.
+        return value
     if isinstance(value, Selection):
         for (state, _record_id, _version), source in references.items():
             if state == value.source_state:

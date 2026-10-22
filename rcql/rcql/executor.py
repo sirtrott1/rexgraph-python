@@ -91,11 +91,11 @@ class Executor:
             raise TypeError("execute_cached requires an explicit QueryCache")
         return cache.execute(self, query)
 
-    def execute_program(self, program, *, explain=False):
+    def execute_program(self, program, *, explain=False, cache=None):
         from .program import Program
         if not isinstance(program, Program):
             raise TypeError("execute_program requires a finite Program")
-        return program.execute(self, explain=explain)
+        return program.execute(self, explain=explain, cache=cache)
 
     def execute_recursive(self, program, entry, arguments, *, source, limits=None,
                           history=True, memoize=True, explain=False):

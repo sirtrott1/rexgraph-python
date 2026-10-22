@@ -146,7 +146,15 @@ def _result_record(result, key, references):
     return record
 
 
-def _restore_result(record, key, references):
+def _declared_reference(reference, references, cpp_declarations):
+    from rexgraph.source_binding import CppSourceReference
+    reference.check()
+    if isinstance(reference, CppSourceReference):
+        return reference.coefficient_digest in cpp_declarations
+    return (reference.state_digest, reference.record_id, reference.version) in references
+
+
+def _restore_result(record, key, references, cpp_declarations=()):
     payload = record.get_metadata(1, 0, "rcql_cache_payload")
     if payload is None:
         return _legacy_restore_result(record, key, references)
@@ -155,9 +163,12 @@ def _restore_result(record, key, references):
     from .result_codec import unpack_result, bind_sources
     result = unpack_result(payload)
     for ref in field_references(result.values):
-        if (ref.state_digest, ref.record_id, ref.version) not in references:
+        if not _declared_reference(ref, references, cpp_declarations):
             raise ValueError("cached result has an unbound source dependency")
-    values = bind_sources(result.values, references, strict=True)
+    # Every reference was admitted above. Native publication references retain
+    # their complete typed endpoint and the decoded value's actual owner; they
+    # are not rebound to a graph or to another cutoff with the same archive.
+    values = bind_sources(result.values, references)
     event = {"node": "cache", "operator": "RESULT_REUSE", "method_status": "observed",
              "methods": [{"method": "validated-native-result-reuse", "cache_key": key}],
              "exactness": "structural"}
@@ -183,6 +194,16 @@ class QueryCache:
         self.namespace = namespace
         self._lock = RLock()
 
+    def _implementation_identity(self):
+        return implementation_identity()
+
+    def _read_result(self, record_id, key, references, cpp_declarations):
+        snapshot = self.store.read_record(record_id)
+        return None if snapshot is None else _restore_result(snapshot.value, key, references, cpp_declarations)
+
+    def _retain_result(self, key, result):
+        pass
+
     def execute(self, executor, query):
         from .executor import Executor
         from .ast import Query, StructuralEdit, Parameter
@@ -205,46 +226,57 @@ class QueryCache:
                 raise ValueError("result reuse refuses observable reads and effectful operations")
         ref = FieldSource(binding.value, binding.ref.record_id, binding.ref.record_version, binding.ref.state_digest)
         all_refs = (ref, *field_references(executor.params))
-        references = {(r.state_digest, r.record_id, r.version): r.source for r in all_refs if r.source is not None}
+        from rexgraph.source_binding import CppSourceReference
+        cpp_refs = tuple(r for r in (*all_refs, *field_references(binding.value))
+                         if isinstance(r, CppSourceReference))
+        cpp_declarations = frozenset(r.coefficient_digest for r in cpp_refs)
+        references = {(r.state_digest, r.record_id, r.version): r.source for r in all_refs
+                      if r.source is not None and not isinstance(r, CppSourceReference)}
         if executor.evidence is not None:
             executor.evidence.validate_binding(binding)
             executor.evidence.validate_values(executor.params)
-        code = implementation_identity()
+        code = self._implementation_identity()
         def identity():
             ref.check()
             for r in all_refs:
                 r.check()
+            for r in cpp_refs:
+                r.check()
             account = ("rcql.result-cache.v2", query, binding.ref.name, ref.as_record(),
                        binding.source.policy.digest, code, _fingerprint(executor.params),
                        None if executor.evidence is None else executor.evidence.digest)
+            if cpp_declarations:
+                account += (("native-publications", tuple(sorted(cpp_declarations))),)
             if executor.exactness_policy != "declared":
                 account += (("evaluation-policy", executor.exactness_policy),)
             return digest(account)
         key = identity()
         record_id = self.namespace+"/"+key
         with self._lock:
-            snapshot = self.store.read_record(record_id)
-            if snapshot is not None:
-                result = _restore_result(snapshot.value, key, references)
+            result = self._read_result(record_id, key, references, cpp_declarations)
+            if result is not None:
                 if executor.exactness_policy == "exact":
                     from .evaluation_policy import require_exact
                     for value in result.values:
                         require_exact(value)
-                if identity() != key:
+                if identity() != key or self._implementation_identity() != code:
                     raise ValueError("inputs changed while reading the cached result")
                 if executor.evidence is not None:
                     executor.evidence.validate_values(result.values)
+                self._retain_result(key, result)
                 return result
             pinned = BoundSource(binding.value, binding.source.policy, ref=binding.ref, temporal=binding.temporal)
             child = Executor(sources={"cache_source": pinned}, params=executor.params,
                              artifacts=executor.artifacts, scheduler=executor.scheduler, evidence=executor.evidence,
                              exactness=executor.exactness_policy)
             result = child.execute(replace(query, source=Parameter("cache_source")))
-            if identity() != key or implementation_identity() != code:
+            if identity() != key or self._implementation_identity() != code:
                 raise ValueError("calculation dependencies changed before cache publication")
             for result_ref in field_references(result.values):
-                if (result_ref.state_digest, result_ref.record_id, result_ref.version) not in references:
+                if not _declared_reference(result_ref, references, cpp_declarations):
                     raise ValueError("cache output contains a source not declared by its inputs")
             record = _result_record(result, key, all_refs)
             self.store.commit_mutation(record_id, record, expected_version=0)
-            return replace(result, native_plan=dict(result.native_plan or {}, cache={"key": key, "hit": False}))
+            result = replace(result, native_plan=dict(result.native_plan or {}, cache={"key": key, "hit": False}))
+            self._retain_result(key, result)
+            return result

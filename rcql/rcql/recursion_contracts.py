@@ -88,11 +88,22 @@ def install(register, OperatorSignature, TypePattern):
 
 
 def refine(typed, children, context):
+    from collections.abc import Mapping
     from .name_relation import NameRelation
     from .recursive_program import RecursiveProgram, RecursionResult
     from .ast import Literal, ListExpr
     from .execution_trace import capture_methods
     unknown = object()
+    def concrete(value, depth=0):
+        # Typed call results describe future values. Keep them available to
+        # NAME_APPLY's type planner, but never seal them into a capture.
+        if value is unknown or isinstance(value, RCType) or depth > 96:
+            return False
+        if isinstance(value, (tuple, list)):
+            return all(concrete(v, depth + 1) for v in value)
+        if isinstance(value, Mapping):
+            return all(concrete(v, depth + 1) for v in value.values())
+        return True
     def known(child):
         if isinstance(child.expr, Literal):
             return child.expr.value if not isinstance(child.expr.value, RCType) else unknown
@@ -125,7 +136,7 @@ def refine(typed, children, context):
             if name == "NAME_APPLY":
                 from .program_contracts import result_types
                 result = result_types(context.binding, (plan.returns[0].result,))[0]
-        elif name in {"NAME_BIND", "NAME_REBIND"} and all(v is not unknown for v in values[1:]):
+        elif name in {"NAME_BIND", "NAME_REBIND"} and all(concrete(v) for v in values[1:]):
             method = operation.bind if name == "NAME_BIND" else operation.rebind
             produced = method(values[1], values[2])
         elif name == "NAME_ALIAS" and values[1] is not unknown:
