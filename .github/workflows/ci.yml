@@ -59,17 +59,15 @@ jobs:
           python -m pip install --no-build-isolation --no-deps -e .
           python -m pip install 'rexgraph[io,oracles]'
 
-      # rexgraph-rcdb is a sibling in this repository rather than a published wheel, and
-      # the agent depends on it, so pip cannot resolve the agent until it is installed.
-      # Install each local distribution before testing its consumers.
+      # Install local dependencies before their consumers.
       - name: install rexgraph-rcdb
         run: pip install -e "rcdb/[sql,objectstore,crypto]"
 
-      - name: install rexgraph-agent
-        run: pip install -e "agent/[server,molecules]"
-
       - name: install query language and System
         run: pip install -e ./rcql -e "./system[dev]"
+
+      - name: install rexgraph-agent
+        run: pip install -e "agent/[server,molecules]"
 
       # the optional dependencies the suites actually exercise. CPU torch only: the
       # default wheel carries a CUDA runtime that is a large download and unusable on a
