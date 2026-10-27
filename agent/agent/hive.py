@@ -434,7 +434,7 @@ class Hive:
         return bee
 
     def add_program(self, name: str, session, record_id: str, *, version: int, sources,
-                    cache=None, runtime_parameters=None) -> Bee:
+                    cache=None, runtime_parameters=None, allow_write=False) -> Bee:
         """Expose a pinned RCQL program as an ordinary capability worker.
 
         ``runtime_parameters`` maps declared input names to zero-argument
@@ -443,12 +443,16 @@ class Hive:
         neither resolvers nor resolved resources are program captures or task
         inputs. Callers cannot override their names. The program still checks
         its input contracts and native execution checks current availability.
+        ``allow_write`` explicitly admits revision operators for this worker;
+        the default grants read operations only. Store access remains scoped.
         """
         from rcql import Program
 
         from .relational import RelationalSession
         if not isinstance(session, RelationalSession) or type(version) is not int or version < 1:
             raise TypeError("a program worker requires a session and explicit positive version")
+        if type(allow_write) is not bool:
+            raise TypeError("program worker allow_write requires a boolean")
         program = Program.from_record(session.read(record_id, version).value)
         from collections.abc import Mapping
 
@@ -474,7 +478,27 @@ class Hive:
             parameters.update((key, resolve()) for key, resolve in resolvers)
             return session.run_program(record_id, version=version, sources=loads(selectors),
                                        parameters=parameters, cache=cache, exactness="exact",
-                                       bind_record_sources=True)
+                                       bind_record_sources=True, allow_write=allow_write)
+        return self.add_worker(name, handler, capability="analyze",
+                               worker_type="program:rcql", context=session.context)
+
+    def add_program_bundle(self, name: str, session, record_id: str, *, version: int,
+                           bundle, source_outputs, parameter_outputs) -> Bee:
+        """Register a pinned program with explicit ports of one owning Result."""
+        from .relational import RelationalSession, _integer
+        from .record_access import copy_record_pin
+        from rcql.program_codec import dumps, loads
+        if not isinstance(session, RelationalSession):
+            raise TypeError("a bundle program worker requires a RelationalSession")
+        _integer(version, "version", 1)
+        bundle = copy_record_pin(bundle)
+        ports = dumps(dict(sources=source_outputs, parameters=parameter_outputs))
+
+        def handler(data):
+            selected = loads(ports)
+            return session.run_program_bundle(record_id, version=version, bundle=bundle,
+                source_outputs=selected["sources"], parameter_outputs=selected["parameters"],
+                parameters=dict(data or {}))
         return self.add_worker(name, handler, capability="analyze",
                                worker_type="program:rcql", context=session.context)
 
@@ -1335,10 +1359,11 @@ class Hive:
             return None
         rex, _meta = tc
         from agent.rcdb import default_store, open_store
+        from agent.record_access import require_store
         if store is None:
             st = default_store()
         else:
-            st = open_store(store) if isinstance(store, str) else store
+            st = open_store(store) if isinstance(store, str) else require_store(store)
         roster = [{"name": b.name, "capability": b.capability, "worker_type": b.worker_type}
                   for b in self._bees.values()]
         caps = sorted({b.capability for b in self._bees.values()})

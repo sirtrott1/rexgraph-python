@@ -139,6 +139,21 @@ def test_rcbf_preserves_a_branching_primary_relation_and_metadata(tmp_path):
     assert rex.get_metadata(1, 0, "rcbf_type") == "gene_relation"
 
 
+@pytest.mark.parametrize("version", [4, 5])
+def test_legacy_snapshot_can_be_saved_as_complete_version_6_state(tmp_path, version):
+    from rexgraph.io import save_rcbf
+    from rexgraph.object_identity import object_digest
+
+    legacy = tmp_path / "legacy.rcbf"
+    _write_rcbf(legacy, signals={"zero": (0.0, 0.0)})
+    data = bytearray(legacy.read_bytes())
+    struct.pack_into("<I", data, 8, version)
+    legacy.write_bytes(data)
+    original = load_rcbf(legacy)
+    save_rcbf(tmp_path / "complete.rcbf", original)
+    assert object_digest(load_rcbf(tmp_path / "complete.rcbf")) == object_digest(original)
+
+
 def test_rcbf_exact_face_and_generic_io_catalog_paths(tmp_path):
     path = tmp_path / "triangle.rcbf"
     _write_rcbf(

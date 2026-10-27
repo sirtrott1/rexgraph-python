@@ -492,7 +492,23 @@ _PROGRAM_DECLARATION = {"type": "object", "properties": {
     "outputs": _PROGRAM_REFERENCES},
     "required": ["name", "steps"], "additionalProperties": False}
 
+from agent import sql_tools as _sql_tools
+_SQL_SOURCE = {"uri": {"type": "string"}, "connection": {"type": "string"},
+               "files": _FILES, "schema": {"type": "string"}}
+
 TOOLS: dict[str, Tool] = {t.name: t for t in [
+    Tool("rexgraph_sql_catalog", "Inspect an explicitly selected SQL source before importing into RCDB.",
+         _SQL_SOURCE, _sql_tools.catalog, wants_context=True),
+    Tool("rexgraph_sql_import", "Import complete selected SQL tables into verified native RCDB records.",
+         {**_SQL_SOURCE, "record_id": {"type":"string"},
+          "expected_version": {"type":"integer","minimum":0},
+          "tables": {"type":"array","items":{"type":"string"}},
+          "batch_size": {"type":"integer","minimum":1,"maximum":100000}},
+         _sql_tools.import_records, required=["record_id","expected_version"], wants_context=True),
+    Tool("rexgraph_rcdb_import_file", "Publish one uploaded custom-format value as a guarded RCDB record.",
+         {"record_id": {"type": "string"}, "expected_version": {"type": "integer", "minimum": 0},
+          "files": _FILES, "format": {"type": "string"}}, _relational.import_file,
+         required=["record_id", "expected_version", "files", "format"], wants_context=True),
     Tool("rexgraph_rcdb_list", "List record identities, versions and structural metadata in the caller's Agent store.",
          {"limit": {"type": "integer", "minimum": 1, "maximum": 1000},
           "offset": {"type": "integer", "minimum": 0}},

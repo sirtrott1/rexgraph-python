@@ -90,23 +90,16 @@ class TestMongo:
 
 
 class TestReflectionAndMigration:
-    def test_live_sqlite_reflection_and_plan(self, tmp_path):
-        import sqlite3
-        dbf = tmp_path / "db.sqlite"
-        con = sqlite3.connect(str(dbf))
-        con.executescript(
-            "CREATE TABLE a (id INTEGER PRIMARY KEY, b_id INTEGER REFERENCES b(id));"
-            "CREATE TABLE b (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES a(id));"
-            "CREATE TABLE c (id INTEGER PRIMARY KEY, a_id INTEGER REFERENCES a(id));")
-        con.commit()
-        con.close()
-        m = sc.reflect_schema("sqlite:///" + str(dbf))
-        assert len(m.tables) == 3 and len(m.foreign_keys) == 3
-        d = sc.diagnose_schema(m)
-        assert d["verdict"] == "cycles_present"
-        mp = d["migration_plan"]
-        assert mp["create_order"] and mp["post_create_ddl"]
-        assert "ALTER TABLE" in mp["post_create_ddl"][0]
+    def test_live_sql_reflection_retains_ordered_composite_keys(self, tmp_path):
+        sa=pytest.importorskip("sqlalchemy")
+        engine=sa.create_engine("sqlite:///"+str(tmp_path/"source.db"))
+        with engine.begin() as connection:
+            connection.exec_driver_sql("CREATE TABLE parent(a INTEGER,b INTEGER,PRIMARY KEY(a,b))")
+            connection.exec_driver_sql("CREATE TABLE child(a INTEGER,b INTEGER,FOREIGN KEY(a,b) REFERENCES parent(a,b))")
+        model=sc.reflect_schema(engine)
+        assert model.foreign_keys[0].from_cols==["a","b"]
+        assert model.foreign_keys[0].to_cols==["a","b"]
+        engine.dispose()
 
     def test_migration_plan_export(self):
         m = sc.parse_schema_ddl(
@@ -118,6 +111,20 @@ class TestReflectionAndMigration:
 
 
 class TestComplex:
+    def test_zero_schema_weight_remains_present(self):
+        model = sc.parse_schema_json(CLEAN_SPEC)
+        graph, _ = sc.schema_to_rex(model, weights={"orders->users": 0})
+        assert graph.w_E.tolist() == [0.0, 1.0, 1.0]
+        report = sc.schema_strain(model, weights={"orders->users": 0})
+        assert report["relation_load"] == [{"relation": "orders -> users", "load": 0.0}]
+
+    @pytest.mark.parametrize("value", [-1, float("inf"), float("nan")])
+    def test_invalid_schema_magnitude_rejected(self, value):
+        model = sc.parse_schema_json(CLEAN_SPEC)
+        for operation in (sc.schema_to_rex, sc.schema_strain):
+            with pytest.raises(ValueError, match="finite and nonnegative"):
+                operation(model, weights={"orders->users": value})
+
     def test_schema_to_rex(self):
         m = sc.parse_schema_json(CLEAN_SPEC)
         rex, meta = sc.schema_to_rex(m)
@@ -328,7 +335,7 @@ def client(tmp_path_factory):
 
     from fastapi.testclient import TestClient
     db = tmp_path_factory.mktemp("scdb") / "db.sqlite"
-    os.environ["REXGRAPH_RCDB_URI"] = f"sqlite:///{db}"
+    os.environ["REXGRAPH_RCDB_URI"] = f"local://{db}"
     import agent.server.routes.rcdb as R
     R._STORE = None
     from agent.server.app import app
@@ -373,26 +380,11 @@ class TestRoute:
         assert body["per_relation"][0]["relation"] == "B -> C"   # ranked, who first
         assert 1.0 < body["effective_root_causes"] < 2.0        # coupled -> < 2
 
-    def test_strain_route_live_stats(self, client, tmp_path_factory):
-        import sqlite3
-        ddl = ("CREATE TABLE A(id INTEGER PRIMARY KEY);"
-               "CREATE TABLE D(id INTEGER PRIMARY KEY);"
-               "CREATE TABLE C(id INTEGER PRIMARY KEY, a INTEGER REFERENCES A(id), d INTEGER REFERENCES D(id));"
-               "CREATE TABLE B(id INTEGER PRIMARY KEY, a INTEGER REFERENCES A(id), "
-               "c INTEGER REFERENCES C(id), d INTEGER REFERENCES D(id));")
-        dbf = tmp_path_factory.mktemp("strain") / "s.db"
-        con = sqlite3.connect(str(dbf))
-        con.executescript(ddl)
-        con.executemany("INSERT INTO A(id) VALUES(?)", [(i,) for i in range(5)])
-        con.executemany("INSERT INTO D(id) VALUES(?)", [(i,) for i in range(5)])
-        con.executemany("INSERT INTO C(id,a,d) VALUES(?,0,0)", [(i,) for i in range(2)])
-        con.executemany("INSERT INTO B(id,a,c,d) VALUES(?,0,0,0)", [(i,) for i in range(100)])
-        con.commit()
-        con.close()
-        r = client.post("/api/v1/schema/strain",
-                        json={"connection": "sqlite:///" + str(dbf)}).json()
-        assert r["row_counts"]["B"] == 100 and r["row_counts"]["C"] == 2
-        assert r["total_strain"] > 0        # skewed data forces strain
+    def test_strain_route_refuses_live_sql_stats(self, client):
+        response = client.post("/api/v1/schema/strain",
+                               json={"connection": "sqlite:///unopened.db"})
+        assert response.status_code == 400
+        assert "RCDB" in response.json()["detail"]
 
 
 class TestRelationLint:

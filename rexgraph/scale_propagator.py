@@ -424,8 +424,8 @@ def greens_diagonal_deflated(L, H, tol=1e-10, chunk=512):
     # VALIDATE the kernel basis: the deflation is only correct when H ⊆ ker(L). The
     # combinatorial cycle basis reduces branching hyperedges to pairwise endpoints and
     # can invent "cycles" that are NOT in ker(B1) (‖L·H‖ ≠ 0); deflating against them is
-    # wrong. When H is not a valid kernel basis fall back to the kernel robust LSQR
-    # numerical pseudoinverse diagonal, which needs no explicit kernel frame.
+    # wrong. When H is not a valid kernel basis use the minimum norm LSQR
+    # pseudoinverse diagonal, which needs no explicit kernel frame.
     hnorm = float(np.linalg.norm(Hd)) or 1.0
     if float(np.linalg.norm(L @ Hd)) > 1e-7 * hnorm:
         return _greens_diagonal_lsqr(L, tol=tol)

@@ -1,7 +1,7 @@
 """The RCStore contract, run against every backend.
 
 Each backend had its own tests, so what a store OWES a caller was implicit and the
-backends drifted: only SQLStore indexed labels, only some honoured as_of on the
+backends drifted: only LocalStore indexed labels, only some honoured as_of on the
 collection accessors, and FileStore's ingest was quadratic without anything saying
 it should not be. This is the contract itself: a new backend is finished when it
 passes.
@@ -33,15 +33,13 @@ def _put(store, rid, labels=None, **kw):
                      meta={"doc_id": rid, "vertex_labels": labels}, **kw)
 
 
-@pytest.fixture(params=["memory", "file", "sql", "rex", "local", "object-file", "object-memory"])
+@pytest.fixture(params=['memory', 'file', 'local', 'rex', 'object-file', 'object-memory'])
 def store(request, tmp_path):
     kind = request.param
     if kind == "memory":
         st = rcdb.MemoryStore()
     elif kind == "file":
         st = rcdb.FileStore(str(tmp_path / "fs"), read_only=False)
-    elif kind == "sql":
-        st = rcdb.SQLStore(f"sqlite:///{tmp_path / 'rc.sqlite'}")
     elif kind == "rex":
         st = rcdb.open_store(f"rex://{tmp_path / 'rx'}", read_only=False)
     elif kind == "local":
@@ -186,7 +184,7 @@ def test_deleting_what_is_not_there_is_false(store):
 
 # durability
 
-@pytest.mark.parametrize("store", ["file", "sql", "rex", "local", "object-file"], indirect=True)
+@pytest.mark.parametrize("store", ['file', 'local', 'rex', 'object-file'], indirect=True)
 def test_a_persistent_store_survives_being_reopened(store, tmp_path):
     """Durability belongs to the persistent backends; the memory store is not a case of it."""
     _put(store, "a", labels=["kept"] * 6)
@@ -194,7 +192,7 @@ def test_a_persistent_store_survives_being_reopened(store, tmp_path):
         type(store)(store.root) if hasattr(store, "root") else \
         rcdb.open_store(store.uri) if hasattr(store, "uri") else None
     if reopened is None:
-        reopened = rcdb.SQLStore(store.conn_str)
+        reopened = rcdb.LocalStore(str(store.root).removeprefix("local://"))
     try:
         assert (reopened.get("a")._agent_meta or {})["vertex_labels"] == ["kept"] * 6
     finally:

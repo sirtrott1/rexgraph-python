@@ -86,11 +86,13 @@ class OutputGuard:
         whole generation finishes. A phrase split across chunks ('chain ' + 'complex') is caught
         when the second chunk lands."""
         acc = ""
-        seen = 0
+        seen = set()
         for ch in chunks:
             acc += ch
             v = self.check(acc)
-            new, seen = v[seen:], len(v)
+            current = {(hit["rule"], tuple(hit["span"]), hit["matched"]) for hit in v}
+            new = [hit for hit in v if (hit["rule"], tuple(hit["span"]), hit["matched"]) not in seen]
+            seen = current
             yield acc, new
 
 

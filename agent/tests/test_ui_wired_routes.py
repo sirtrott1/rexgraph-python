@@ -8,7 +8,7 @@ from rexgraph.graph import RexGraph
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "rcdb.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "rcdb.sqlite"))
     import agent.server.routes.rcdb as rr
     from agent.rcdb import reset_default_store
     reset_default_store()

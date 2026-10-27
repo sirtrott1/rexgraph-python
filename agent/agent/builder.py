@@ -266,13 +266,19 @@ def _step_model(files, state, params):
     template = params.get("prompt_template", "Analyze:\n{context}")
     max_tokens = params.get("max_tokens", 1024)
 
-    # Build context from top chunks
-    context_parts = []
-    for dc in chunks:
-        for chunk in dc.get("chunks", [])[:3]:
-            context_parts.append(chunk.text)
-    context = "\n\n".join(context_parts)
-
+    from agent.model_context import select_context
+    from types import SimpleNamespace
+    corpus = state.get("corpus")
+    docs = {doc.doc_id: doc for doc in corpus.documents} if corpus is not None else {}
+    entries = [(docs.get(group["doc_id"], SimpleNamespace(doc_id=group["doc_id"], text=None, rex=None)), chunk)
+               for group in chunks for chunk in group.get("chunks", ())[:3]]
+    selection = select_context(entries)
+    import string
+    if "context" not in {name for _, name, _, _ in string.Formatter().parse(template)}:
+        selection = select_context(())
+    context = selection.text
+    state["model_context"] = selection.as_record()
+    state["model_status"] = "unavailable"
     # Format prompt
     # Get structural info from first chunk for template
     first_chunk = None
@@ -306,7 +312,9 @@ def _step_model(files, state, params):
             for choice in data.get("choices", []):
                 text += choice.get("message", {}).get("content", "")
             from agent.server.security import sanitize_model_response
+            state["model_response_raw"] = text
             state["model_response"] = sanitize_model_response(text)
+            state["model_status"] = "generated"
             return {"response_length": len(text)}
     except Exception:
         pass
@@ -320,26 +328,14 @@ def _step_hallucination(files, state, params):
     """Check model output for hallucinations."""
     from agent.hallucination import detect_hallucinations_exchange
 
-    model_response = state.get("model_response", "")
-    chunks = state.get("chunks", [])
-    if not model_response or not chunks:
-        return {"skipped": "no response or chunks"}
-
-    # Use first chunk group's text as source
-    source_parts = []
-    for dc in chunks:
-        for chunk in dc.get("chunks", []):
-            source_parts.append(chunk.text)
-    source = "\n".join(source_parts)
-
-    report = detect_hallucinations_exchange(source, model_response)
-    state["hallucination_report"] = {
-        "score": report.overall_score,
-        "kappa_correlation": report.kappa_correlation,
-        "n_shared": report.n_shared_entities,
-        "n_flags": report.n_flags,
-        "summary": report.summary(),
-    }
+    from agent.hallucination import HallucinationReport
+    context = state.get("model_context")
+    response = state.get("model_response", "")
+    if context is None or state.get("model_status") != "generated":
+        report = HallucinationReport(reasons=["no recorded generated response and emitted context"])
+    else:
+        report = detect_hallucinations_exchange(context["text"], response)
+    state["hallucination_report"] = {**report.as_record(), "score": report.overall_score, "context": context}
     return state["hallucination_report"]
 
 
@@ -567,7 +563,7 @@ def _step_langgraph_analyze(files, state, params):
     # analysis succeeded. Indenting them into the handler above made them conditional
     # on rsg.analyze() raising, so a successful run returned none of them.
     try:
-        threshold = params.get("harmonic_threshold", 0.4)
+        threshold = params.get("harmonic_threshold")
         result["should_continue"] = rsg.should_continue(harmonic_threshold=threshold)
 
         result["cycles"] = rsg.detect_cycles()

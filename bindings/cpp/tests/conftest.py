@@ -2,9 +2,14 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+
+# Shared reference helpers are sibling test modules. Keep their import root
+# available when an installed-package runner selects individual test files.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 @pytest.fixture(scope="session")

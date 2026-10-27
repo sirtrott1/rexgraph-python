@@ -63,6 +63,12 @@ inline std::string vector_bytes(const numeric::RationalVector& v) {
 }
 class TaskOutcomeBridge {
 public:
+    const task_bridge_detail::Owner& native_owner() const & { return *owner_; }
+    const task_bridge_detail::Owner& native_owner() const && = delete;
+    static std::shared_ptr<TaskOutcomeBridge> adopt(task_bridge_detail::Owner value,
+            const std::vector<std::size_t>& bounds,std::size_t maximum) {
+        return std::shared_ptr<TaskOutcomeBridge>(new TaskOutcomeBridge(std::move(value),bounds,maximum));
+    }
     TaskOutcomeBridge(const TaskDeclaration& task, std::shared_ptr<InputUseAssetBridge> asset,
             const TaskBinding& binding, std::shared_ptr<AvailableResultBridge> field,
             std::shared_ptr<AvailableAffineBridge> family, std::shared_ptr<AvailabilityContextBridge> context,

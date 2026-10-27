@@ -156,6 +156,8 @@ def test_corrupt_schema_is_refused():
 
 @pytest.mark.parametrize('backend',['memory','file','rex','sqlite'])
 def test_rcdb_versions_and_query_roundtrip(tmp_path,backend):
+    if backend == "sqlite":
+        pytest.importorskip("sqlalchemy", reason="standalone RCDB SQL provider is optional")
     from rcdb import open_store, RexStore
     from rcql import Executor,parse
     if backend=='rex':store=RexStore(str(tmp_path/'native'), read_only=False)
@@ -195,6 +197,8 @@ def test_annotation_file_formats(tmp_path,format_name):
 
 @pytest.mark.parametrize('backend',['file','rex','sqlite'])
 def test_store_reopen_with_unrelated_working_directory(tmp_path,backend,monkeypatch):
+    if backend == "sqlite":
+        pytest.importorskip("sqlalchemy", reason="standalone RCDB SQL provider is optional")
     from rcdb import open_store
     uri={'file':'file://'+str(tmp_path/'files'),'rex':'rex://'+str(tmp_path/'rex'),'sqlite':'sqlite:///'+str(tmp_path/'sql.db')}[backend]
     g=RexGraph.from_cells([2,[[0,1]]]);a=attachment();g.attach_metadata(1,0,'annotation',a)

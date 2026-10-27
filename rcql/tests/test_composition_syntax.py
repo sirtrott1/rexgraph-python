@@ -50,6 +50,18 @@ def test_every_registered_adapter_has_a_named_contract():
     assert set(_REGISTRY) == set(EXPRESSION_ARGUMENTS)
 
 
+@pytest.mark.parametrize('text, expected', [
+    ('MODEL_ASSIGNMENT_EXECUTE(execution_context=$ctx, input_archive=$input, checkpoint=$checkpoint)',
+     call('MODEL_ASSIGNMENT_EXECUTE', param('checkpoint'), param('input'), param('ctx'))),
+    ('MODEL_ASSIGNMENT_BATCH(execution_context=$ctx, observations=$rows, state=$state)',
+     call('MODEL_ASSIGNMENT_BATCH', param('state'), param('rows'), param('ctx'))),
+    ('MODEL_ASSIGNMENT_FIELD(occurrences=true, execution_context=$ctx, node=3, output=$output)',
+     call('MODEL_ASSIGNMENT_FIELD', param('output'), 3, param('ctx'), True)),
+])
+def test_assignment_named_arguments_keep_adapter_order(text, expected):
+    assert parse('FROM $r RETURN ' + text).returns == (expected,)
+
+
 def test_source_and_return_aliases_named_args_and_lists_match_builder(rex):
     text = ('FROM $r AS r LET selected = r.CELLS(indices=[0, 2], grade=1) '
             'RETURN INDICATOR(selected) AS signal, [17/20, -2, [true, NONE]] AS constants')

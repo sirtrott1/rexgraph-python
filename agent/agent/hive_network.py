@@ -183,7 +183,8 @@ class HiveNetwork:
         RCStore or an RCDB uri (pass a shared store or a persistent uri to retrieve later). Returns
         the network record id, or None when there is no inter hive structure yet."""
         from agent.rcdb import open_store
-        st = open_store(store) if isinstance(store, str) else store
+        from agent.record_access import require_store
+        st = open_store(store) if isinstance(store, str) else require_store(store)
         with self._traffic_lock:
             rex, ags, idx, we, edges = self._net.interaction_complex()
         with self._registry_lock:

@@ -109,9 +109,25 @@ def test_query_resources_are_distinct_and_reset_on_nested_failure():
     with query_resource_scope():
         outer = current_query_resources()
         outer["retained"] = object()
-        with pytest.raises(RuntimeError), query_resource_scope():
+        # Nested program steps reuse their enclosing owners. An explicit
+        # resource dictionary declares the independent lifetime tested here.
+        with pytest.raises(RuntimeError), query_resource_scope(resources={}):
             assert current_query_resources() is not outer
             raise RuntimeError("failed query")
+        assert current_query_resources() is outer
+    assert current_query_resources() is None
+
+
+def test_nested_program_resources_share_owners_and_reset_on_failure():
+    from rcql.execution_trace import current_query_resources, query_resource_scope
+    assert current_query_resources() is None
+    with query_resource_scope():
+        outer = current_query_resources()
+        retained = outer['retained'] = object()
+        with pytest.raises(RuntimeError), query_resource_scope():
+            assert current_query_resources() is outer
+            assert current_query_resources()['retained'] is retained
+            raise RuntimeError('failed program step')
         assert current_query_resources() is outer
     assert current_query_resources() is None
 

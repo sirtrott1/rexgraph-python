@@ -16,8 +16,9 @@ def test_dbguard_off_by_default_allows_anything(monkeypatch):
               "REXGRAPH_ALLOWED_DB_SCHEMES", "REXGRAPH_ALLOWED_DB_HOSTS"):
         monkeypatch.delenv(k, raising=False)
     # No policy set -> everything passes, including local files and private hosts.
-    check_db_uri("sqlite:////etc/passwd")
-    check_db_uri("postgresql://user:pw@10.0.0.5/db")
+    check_db_uri("local:///etc/passwd")
+    with pytest.raises(HTTPException, match="SQL"):
+        check_db_uri("postgresql://user:pw@10.0.0.5/db")
     check_db_uri("edgelist")            # bare scheme, no '://'
 
 
@@ -26,27 +27,28 @@ def test_dbguard_safe_blocks_file_and_private(monkeypatch):
     monkeypatch.delenv("REXGRAPH_ALLOWED_DB_SCHEMES", raising=False)
     monkeypatch.delenv("REXGRAPH_ALLOWED_DB_HOSTS", raising=False)
     with pytest.raises(HTTPException):
-        check_db_uri("sqlite:////etc/passwd")           # file scheme
+        check_db_uri("local:///etc/passwd")           # file scheme
     with pytest.raises(HTTPException):
         check_db_uri("postgresql://localhost/db")        # loopback host
     with pytest.raises(HTTPException):
         check_db_uri("mysql://user:pw@192.168.1.9/db")   # private host
-    # a public DB server is allowed
-    check_db_uri("postgresql://user:pw@db.example.com:5432/prod")
+    # SQL is refused for public hosts too.
+    with pytest.raises(HTTPException, match="SQL"):
+        check_db_uri("postgresql://user:pw@db.example.com:5432/prod")
 
 
 def test_dbguard_scheme_and_host_allowlists(monkeypatch):
     monkeypatch.delenv("REXGRAPH_DB_SAFE", raising=False)
-    monkeypatch.setenv("REXGRAPH_ALLOWED_DB_SCHEMES", "postgresql,mysql")
+    monkeypatch.setenv("REXGRAPH_ALLOWED_DB_SCHEMES", "mongodb,neo4j")
     with pytest.raises(HTTPException):
-        check_db_uri("mongodb://db.example.com/x")       # scheme not allowed
-    check_db_uri("postgresql+psycopg2://db.example.com/x")  # +driver stripped, ok
+        check_db_uri("kafka://db.example.com/x")       # scheme not allowed
+    check_db_uri("mongodb://db.example.com/x")  # +driver stripped, ok
 
     monkeypatch.delenv("REXGRAPH_ALLOWED_DB_SCHEMES", raising=False)
     monkeypatch.setenv("REXGRAPH_ALLOWED_DB_HOSTS", "db1.corp,db2.corp")
     with pytest.raises(HTTPException):
         check_db_uri("postgresql://evil.example.com/x")  # host not allowed
-    check_db_uri("postgresql://db1.corp/x")
+    check_db_uri("mongodb://db1.corp/x")
 
 
 # error sanitizer
@@ -197,18 +199,18 @@ def test_dbguard_resolves_hostname_to_private(monkeypatch):
     monkeypatch.setattr(dbg.socket, "getaddrinfo",
                         lambda host, *a, **k: [(2, 1, 6, "", ("10.1.2.3", 0))])
     with pytest.raises(HTTPException):
-        dbg.check_db_uri("postgresql://sneaky.example.com/db")
+        dbg.check_db_uri("mongodb://sneaky.example.com/db")
 
     # hostname resolving to a public IP -> allowed
     monkeypatch.setattr(dbg.socket, "getaddrinfo",
                         lambda host, *a, **k: [(2, 1, 6, "", ("93.184.216.34", 0))])
-    dbg.check_db_uri("postgresql://legit.example.com/db")
+    dbg.check_db_uri("mongodb://legit.example.com/db")
 
     # unresolvable hostname falls through (the real connection would just fail)
     def _boom(*a, **k):
         raise OSError("name resolution failed")
     monkeypatch.setattr(dbg.socket, "getaddrinfo", _boom)
-    dbg.check_db_uri("postgresql://does-not-exist.invalid/db")
+    dbg.check_db_uri("mongodb://does-not-exist.invalid/db")
 
 
 #### path containment: a prefix of the text is not containment in the tree

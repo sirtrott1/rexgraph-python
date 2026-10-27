@@ -156,3 +156,125 @@ The [API reference](REFERENCE.md) covers operators and detailed mathematical
 contracts. The [dependency guide](../DEPENDENCIES.md) lists development extras.
 From the repository root, run `make test-rcql TEST_ARGS='-rs'` after installing
 a development profile. RCQL is distributed under the [Apache License 2.0](LICENSE).
+
+### Layer products and runtime revisions
+
+`Layer`, `LayerInterface`, `LayerProduct`, `LayerSolution`, `LayerReadout` and
+`LayerOperator` are finite retained declarations, available through the Python
+API and the `LAYER_*` query operators. A product keeps named layer carriers,
+participation roles and explicit compatibility maps. Affine products use native
+section completion and retain the entire family and exact contradiction
+certificates. `LAYER_VALUE` returns a prediction only when its readout is fixed
+throughout that family. Local RCQL programs compile through the existing
+`ProgramAssembly` and `ProgramFamily` machinery; unused latent directions remain
+free. `LAYER_APPLY` returns a `ProgramResult` for affine programs, readable with
+`PROGRAM_OUTPUT`, or a `TemporalModel` for function products.
+
+With the optional `temporal` extra, whole partial functions, finite learning,
+transfer, cover gluing and correlated context families execute in the installed
+C++ RexTemporal runtime. Function layers declare their support and exact chart
+scale and shift. Finite family products retain coupled alternatives and global
+witnesses. Incomplete searches remain incomplete. Their projections are never
+replaced by an independent Cartesian product or an arbitrary worker.
+
+`LAYER_MODIFY(product,replacements,interfaces)` and
+`FUNCTION_MODIFY(model,program,changes)` produce new declarations at runtime.
+Earlier versions remain usable. Modified products retain their predecessor and
+all contributor identities. They can be captured by ordinary finite RCQL
+programs or used through named and recursive operations. Compilation and
+`EXPLAIN` do not execute a target function. Applying an operator rechecks its
+current sources, permissions and mathematical premises. This changes a callable
+declaration; publishing a stored revision remains an explicit existing storage
+operation.
+
+`FUNCTION_SOURCE`, `FUNCTION_DECLARE`, `FUNCTION_PROGRAM`, `FUNCTION_APPLY`,
+`FUNCTION_FIT`, `FUNCTION_TRANSFER`, `FUNCTION_JOINT`, `FUNCTION_INFO` and
+`FUNCTION_VERIFY` expose the native runtime. Constructors accept closed finite
+specifications; opcodes are `input`, `constant`, `derivative`, `pullback`, `add`,
+`subtract`, `multiply`, `divide` and `restrict`. A constant program references a
+retained constant-function object. Role bindings name actual source-local
+function IDs. Training requires current `read` and `train` permissions and uses
+explicit supplied observations (the NamedInputs profile). It does not infer
+availability or training authority from a function domain or label.
+
+`FUNCTION_FIELD(model,injection,grade,powers)` admits a single whole-domain
+polynomial through an explicit scalar injection into an actual cell carrier.
+Its ordered power axis remains a tensor axis, allowing native responses and
+full cross moments. The operation refuses domain clipping, nonconstant
+denominators, discarded powers and foreign carriers. Retain the model alongside
+the derived field to retain its executable function source.
+
+Layer values and models support `to_record`/`from_record`, `LAYER_RECORD`/
+`LAYER_READ` and `FUNCTION_RECORD`/`FUNCTION_READ`. Portable query results also
+retain these closed declarations. Decoding does not execute a native kernel or
+restore authority; executing a reopened value requires current explicit source
+bindings. Native C++ field and moment result owners reopen from their complete
+checked archive with matching coordinate and implementation identities.
+
+The canonical Core `RelationalRuntime` and these layer declarations exchange
+complete native archives through `TemporalModel.from_relational`,
+`TemporalModel.to_relational` and `FUNCTION_IMPORT`/`FUNCTION_EXPORT`. Conversion
+checks the source and endpoint bytes and preserves source-local IDs. Exporting
+a source-bound model as an unqualified packet is refused; keep its native record
+and explicit contributors. Native execution requires the implementation receipt
+recorded by the model; incompatible runtimes require an explicit migration.
+
+The three admitted product profiles are affine interfaces, whole-function
+covers and finite context families. Cross-profile maps require an explicit
+adapter. Finite products preserve their native families; selecting an executable
+worker still requires a complete qualified native fit. These APIs make no
+unrestricted nonlinear or demand-loaded execution claim. See
+[`examples/layer_product.py`](examples/layer_product.py) for a complete runtime
+revision example.
+
+## Ontology queries
+
+Ontology operators retain complete `OntologyState` values through typed query
+results, saved results and program composition. Supply a graph containing an
+ontology declaration as the query source:
+
+```python
+from fractions import Fraction
+from rexgraph import RexGraph
+from rexgraph.ontology import OntologyState
+from rexgraph.value import ExactTime
+from rcql import Executor, parse
+
+ontology = OntologyState.create(
+    RexGraph.from_graph([0], [1]), identity="example:types", context="observation",
+    known_at=ExactTime(Fraction(10)), signature={"types": ("relation",)},
+    universe={"scope": "declared-source"},
+)
+result = Executor(sources={"types": ontology.record()}).execute(parse(
+    "FROM $types LET o = ONTOLOGY_AT(ONTOLOGY_READ(), 10) "
+    "RETURN ONTOLOGY_INFO(o), ONTOLOGY_EXPORT(o), o"
+))
+```
+
+The [Core guide](../rexgraph/README.md#ontology-snapshots) also shows file storage.
+
+| Operation | Result |
+| --- | --- |
+| `ONTOLOGY_READ(grade=1, index=0)` | Selected ontology in the source graph |
+| `ONTOLOGY_IMPORT(archive)` / `ONTOLOGY_EXPORT(ontology)` | Whole RCBO snapshot / complete bytes |
+| `ONTOLOGY_RECORD(ontology)` | Detached complete relational source |
+| `ONTOLOGY_INFO(ontology)` / `ONTOLOGY_DECLARATION(ontology)` | Bounded inspection / complete declarations |
+| `ONTOLOGY_AT(ontology, cutoff)` | Snapshot admitted by its declared knowledge horizon |
+| `ONTOLOGY_REVISE(ontology, graph, changes, sources=None)` | Explicit child with parent and maps |
+| `ONTOLOGY_VERIFY(ontology, cutoff, sources=None, parent=None)` | Explicit provider report |
+| `ONTOLOGY_NATIVE_APPEND(ontology, component, frame, cutoff, sources=None)` | Child retaining an admitted native history frame |
+| `ONTOLOGY_NATIVE_ADD(ontology, component, specification, cutoff, sources=None)` | Child with explicit native aspect/type additions |
+
+Cutoffs accept exact integers, fractions or `ExactTime`. `ONTOLOGY_AT` checks
+the declared horizon; actual publication time belongs to source selection.
+Evidence dependencies are checked through existing source authority. Revisions
+require read and train authority. `EXPLAIN` describes these requirements without
+opening a provider or solving axioms. A provider's scoped report states what it
+actually checked; retaining an ontology declaration grants no execution access.
+
+The native revision operators require the optional C++ bridge and the actual
+bound parent record and version. They return immutable children and retain the
+parent as an evidence dependency. They do not publish records. Reusable programs
+can carry these operations, while execution still requires read and train access;
+Agent workers also require registration-owned write permission. See the
+[native source guide](../bindings/cpp/README.md#native-source-revisions).

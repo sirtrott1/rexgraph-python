@@ -9,18 +9,33 @@ on:
   pull_request:
   workflow_dispatch:
 
-# a new push to the same branch makes the running build irrelevant, so stop paying for it
+# Cancel superseded builds on the same branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  public-source:
+    name: public source and history
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: retain the previous publication for history comparison
+        if: github.event_name == 'push' && github.event.forced
+        env:
+          PREVIOUS_COMMIT: ${{ github.event.before }}
+        run: git fetch --no-tags origin "$PREVIOUS_COMMIT"
+      - name: check public source and outgoing history
+        run: python rexgraph/tests/_support/check_public_repository.py --working-tree --history --event "$GITHUB_EVENT_PATH"
+      - name: check publication rules
+        run: python -m unittest discover -s rexgraph/tests/_support -p 'test_public_repository.py'
   test:
     name: ${{ matrix.os }} py${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     strategy:
-      # one platform failing must not cancel the other, or a break limited to macOS hides
-      # whether Linux is fine, which is the question you actually have at that moment
+      # Complete each platform independently so platform-specific failures remain visible.
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]

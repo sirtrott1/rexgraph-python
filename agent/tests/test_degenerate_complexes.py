@@ -91,7 +91,7 @@ def test_a_single_edge_has_an_infinite_mixing_time():
 @pytest.mark.parametrize("depth", DEPTHS)
 def test_the_analysis_route_can_send_an_empty_complex(depth, tmp_path, monkeypatch):
     """The analysis route serializes absent measurements in an empty complex."""
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "r.sqlite"))
     from agent.rcdb import reset_default_store
     reset_default_store()
     from agent.server.app import app, get_store
@@ -108,7 +108,7 @@ def test_the_analysis_route_can_send_an_empty_complex(depth, tmp_path, monkeypat
 
 
 def test_a_single_edge_survives_the_route(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "r.sqlite"))
     from agent.rcdb import reset_default_store
     reset_default_store()
     from agent.server.app import app, get_store
@@ -127,7 +127,7 @@ def test_an_undefined_measurement_arrives_as_null_not_as_a_zero(tmp_path,
                                                                 monkeypatch):
     """null says "no value". 0.0 would be a measurement, and a reader cannot tell the
     difference between a coherence of zero and a coherence over nothing."""
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "r.sqlite"))
     from agent.rcdb import reset_default_store
     reset_default_store()
     from agent.server.app import app, get_store

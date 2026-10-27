@@ -1,155 +1,103 @@
-"""Columnar queries over record signatures from an existing store.
-
-signature_view projects signature scalars into a DuckDB table for filtering,
-grouping and aggregation. Query results can return record IDs for retrieval
-from the original store. Complex records remain in that store.
-
-    from agent import analytics
-    view = analytics.signature_view(store)
-    view.sql("SELECT source, avg(kappa_mean) FROM signatures GROUP BY source")
-    view.ids("betti1 > 2 AND chain_valid = 1")"""
-
+"""RCQL queries and metadata observations over records in an RCDB provider."""
 from __future__ import annotations
 
-#: the scalar columns every signature carries. Anything else stays in the record,
-#: which is where a document belongs.
+from .record_access import read_query, require_store
+
 COLUMNS = (
-    ("id", "VARCHAR"),
-    ("version", "INTEGER"),
-    ("nV", "INTEGER"),
-    ("nE", "INTEGER"),
-    ("nF", "INTEGER"),
-    ("betti0", "INTEGER"),
-    ("betti1", "INTEGER"),
-    ("kappa_mean", "DOUBLE"),
-    ("n_voids", "INTEGER"),
-    ("chain_valid", "BOOLEAN"),
-    ("n_labels", "INTEGER"),
-    ("source", "VARCHAR"),
-    ("object_type", "VARCHAR"),
-    ("tx_from", "DOUBLE"),
-    ("valid_from", "DOUBLE"),
+    ("id", "text"), ("version", "integer"), ("nV", "integer"),
+    ("nE", "integer"), ("nF", "integer"), ("betti0", "integer"),
+    ("betti1", "integer"), ("kappa_mean", "number"), ("n_voids", "integer"),
+    ("chain_valid", "boolean"), ("n_labels", "integer"), ("source", "text"),
+    ("object_type", "text"), ("tx_from", "number"), ("valid_from", "number"),
 )
 
 
-def _num(x, default=0):
-    try:
-        if x is None:
-            return default
-        return type(default)(x)
-    except (TypeError, ValueError):
-        return default
-
-
-def signature_rows(store, *, limit: int = 10 ** 9, include_history: bool = False,
-                   as_of=None, valid_at=None) -> list[tuple]:
-    """Flatten a store's signatures into rows in COLUMNS order."""
-    records = store.list(limit=limit, include_history=include_history,
-                         as_of=as_of, valid_at=valid_at)
-    rows = []
-    for rec in records:
-        sig = rec.signature or {}
-        betti = sig.get("betti") or []
-        rows.append((
-            rec.id, int(rec.version),
-            _num(sig.get("nV")), _num(sig.get("nE")), _num(sig.get("nF")),
-            _num(betti[0] if len(betti) > 0 else 0),
-            _num(betti[1] if len(betti) > 1 else 0),
-            _num(sig.get("kappa_mean"), 0.0),
-            _num(sig.get("n_voids")),
-            bool(sig.get("chain_valid", False)),
-            _num(sig.get("n_labels")),
-            str(sig.get("source") or ""),
-            str(sig.get("object_type") or ""),
-            _num(rec.tx_from, 0.0),
-            _num(rec.valid_from if rec.valid_from is not None else 0.0, 0.0),
-        ))
-    return rows
+def _row(record):
+    signature = record["signature"]
+    betti = signature.get("betti", ())
+    values = {name: signature.get(name) for name, _ in COLUMNS}
+    values.update({key: record[key] for key in ("id", "version", "tx_from", "valid_from")})
+    values["betti0"] = betti[0] if betti else None
+    values["betti1"] = betti[1] if len(betti) > 1 else signature.get("betti1")
+    return values
 
 
 class SignatureView:
-    """A columnar view of one store's signatures. Read only, and derived: rebuild it
-    after writing rather than trying to keep it in step, since a view that silently
-    lags the store it describes is worse than one you refresh."""
+    """A live read-only RCQL view with explicit record selection and time cuts."""
 
-    TABLE = "signatures"
+    def __init__(self, store, *, limit=10000, include_history=False, as_of=None, valid_at=None):
+        self.store = require_store(store)
+        self.limit = limit
+        self.include_history = include_history
+        self.as_of, self.valid_at = as_of, valid_at
 
-    def __init__(self, store, *, limit: int = 10 ** 9, include_history: bool = False,
-                 as_of=None, valid_at=None):
-        try:
-            import duckdb
-        except ImportError as e:
-            raise ImportError(
-                "columnar signature queries need duckdb: pip install duckdb") from e
-        self.store = store
-        self._duckdb = duckdb
-        self.con = duckdb.connect()
-        self._limit = limit
-        self._include_history = include_history
-        self._as_of, self._valid_at = as_of, valid_at
-        self.refresh()
+    def query(self, query, *, parameters=None):
+        """Return a complete canonical RCQL result from the selected store."""
+        return read_query(self.store, query, parameters=parameters)
 
-    def refresh(self) -> SignatureView:
-        """Re project the store. Cheap: signatures are scalars the store already holds."""
-        cols = ", ".join(f"{n} {t}" for n, t in COLUMNS)
-        self.con.execute(f"DROP TABLE IF EXISTS {self.TABLE}")
-        self.con.execute(f"CREATE TABLE {self.TABLE} ({cols})")
-        rows = signature_rows(self.store, limit=self._limit,
-                              include_history=self._include_history,
-                              as_of=self._as_of, valid_at=self._valid_at)
-        if rows:
-            placeholders = ", ".join("?" for _ in COLUMNS)
-            self.con.executemany(
-                f"INSERT INTO {self.TABLE} VALUES ({placeholders})", rows)
-        self.n_rows = len(rows)
+    def records(self, filters=None, *, limit=None, offset=0):
+        return self.query('FROM $db RETURN RCDB_SELECT($filters,$limit,$offset,$as_of,$valid_at,$history)',
+            parameters={"filters": filters, "limit": self.limit if limit is None else limit,
+                        "offset": offset, "as_of": self.as_of, "valid_at": self.valid_at,
+                        "history": self.include_history}).values[0]
+
+    def rows(self, filters=None, *, limit=None, offset=0):
+        return [_row(record) for record in self.records(filters, limit=limit, offset=offset)]
+
+    def ids(self, filters=None, *, limit=None, offset=0):
+        """Select identities with the store's declared structural predicates."""
+        return [record["id"] for record in self.records(filters, limit=limit, offset=offset)]
+
+    def complexes(self, filters=None, *, limit=100):
+        return [(record["id"], self.store.read_record(record["id"], version=record["version"]).value)
+                for record in self.records(filters, limit=limit)]
+
+    def columns(self):
+        return [name for name, _ in COLUMNS]
+
+    def refresh(self):
+        """Return the live view; no independent materialized table is retained."""
         return self
 
-    def sql(self, query: str) -> list[tuple]:
-        """Run SQL against the signature table. `signatures` is the table name."""
-        return self.con.execute(query).fetchall()
-
-    def columns(self) -> list[str]:
-        return [n for n, _ in COLUMNS]
-
-    def ids(self, where: str, *, limit: int = 10 ** 9) -> list[str]:
-        """Record ids matching a SQL predicate: the bridge back to the store."""
-        rows = self.con.execute(
-            f"SELECT id FROM {self.TABLE} WHERE {where} LIMIT {int(limit)}").fetchall()
-        return [r[0] for r in rows]
-
-    def complexes(self, where: str, *, limit: int = 100) -> list[tuple]:
-        """(id, complex) for records matching a predicate. The view selects; the
-        store still owns the payload, so nothing is duplicated."""
-        return [(rid, self.store.get(rid)) for rid in self.ids(where, limit=limit)]
-
-    def describe(self) -> list[tuple]:
-        """Per column summary statistics, which is usually the first real question."""
-        return self.sql(f"SUMMARIZE {self.TABLE}")
+    def describe(self):
+        """Summarize the selected metadata without replacing stored values."""
+        from fractions import Fraction
+        from math import fsum
+        rows = self.rows()
+        result = []
+        for name, kind in COLUMNS:
+            values = [row[name] for row in rows if row[name] is not None]
+            numeric = values if kind in {"integer", "number"} else []
+            mean = (Fraction(sum(numeric), len(numeric)) if numeric and all(type(v) is int for v in numeric)
+                    else fsum(numeric)/len(numeric) if numeric else None)
+            result.append({"name": name, "kind": kind, "count": len(values),
+                           "missing": len(rows)-len(values), "mean": mean,
+                           "minimum": min(numeric) if numeric else None,
+                           "maximum": max(numeric) if numeric else None})
+        return result
 
     def to_arrow(self):
-        """The table as Arrow, for anything downstream that speaks it (polars,
-        pandas, a parquet write) without this module taking a dependency on it."""
-        # to_arrow_table, not .arrow(): the latter returns a streaming RecordBatchReader,
-        # which is not a materialized table. This was fetch_arrow_table, which duckdb
-        # deprecated in favour of this name; both return the same materialized Table.
-        return self.con.execute(f"SELECT * FROM {self.TABLE}").to_arrow_table()
+        import pyarrow
+        rows = self.rows()
+        return pyarrow.Table.from_pylist(rows) if rows else pyarrow.table({name: [] for name, _ in COLUMNS})
+
+    def sql(self, query):
+        raise ValueError("SQL execution was removed; use query() with RCQL")
 
     def close(self):
-        self.con.close()
+        """The caller retains ownership of the supplied RCDB store."""
 
     def __len__(self):
-        return self.n_rows
+        return len(self.records())
 
 
-def signature_view(store, **kw) -> SignatureView:
-    """A columnar view over `store`'s signatures."""
-    return SignatureView(store, **kw)
+def signature_rows(store, **options):
+    return [tuple(row[name] for name, _ in COLUMNS) for row in SignatureView(store, **options).rows()]
 
 
-def available() -> bool:
-    """Whether columnar analytics can run here."""
-    try:
-        import duckdb  # noqa: F401
-        return True
-    except ImportError:
-        return False
+def signature_view(store, **options):
+    return SignatureView(store, **options)
+
+
+def available():
+    return True

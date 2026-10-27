@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "rexgraph-cpp-bindings"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python bindings for exact rexgraph-cpp source and field execution"
 readme = "README.md"
 license = "Apache-2.0"

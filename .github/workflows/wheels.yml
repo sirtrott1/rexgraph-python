@@ -1,14 +1,5 @@
-# Build installable artifacts, so installing does not require building.
-#
-# `ci.yml` answers "does the source build here". This answers a different question:
-# "can someone install this without a toolchain at all". Today they cannot. rexgraph is
-# not on PyPI, so every install compiles 39 Cython kernels and therefore needs a C
-# compiler, meson and cython present and agreeing. That is the actual cross setup
-# barrier, and a wheel is what removes it.
-#
-# Deliberately NOT triggered by ordinary pushes. Wheels take much longer than the test
-# suites and are only wanted when something is being released or checked. Run it from
-# the Actions tab, or let a published release run it.
+# Build binary wheels and a source archive for release or manual runs.
+# Wheel builds install BLAS and compile the Cython extensions on each runner.
 
 name: wheels
 

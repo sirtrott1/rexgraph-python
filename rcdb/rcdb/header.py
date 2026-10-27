@@ -49,7 +49,8 @@ DEFAULT_RECORD_CODECS = (CodecRef(COMPLEX_CODEC, COMPLEX_CODEC_VERSION),
     CodecRef("rexgraph.value", 1), CodecRef("rexgraph.provenance", 1),
     CodecRef("rexgraph.dataset-declaration", 1), CodecRef("rcdb.copy-receipt", 1),
     CodecRef("rcdb.migration-plan", 1), CodecRef("rcdb.migration-progress", 1),
-    CodecRef("rcdb.migration-step", 1), CodecRef("rcql.query-result", 1))
+    CodecRef("rcdb.migration-step", 1), CodecRef("rcql.query-result", 1),
+    CodecRef("rexgraph.ontology", 1))
 
 
 def record_codec_inventory(value):

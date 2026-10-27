@@ -1,19 +1,4 @@
-"""
-agent.server.persistence: workspace state persistence using rexgraph/io.
-
-Uses the existing I/O layer directly:
-    save_rcbd / load_rcbd     for RexGraph bundles (.rcbd; legacy .rex read)
-    get_engine + write_*_sql  for analysis tables (SQLite)
-
-Each workspace gets:
-    ~/.config/rexgraph/workspaces/{name}/
-    ├── state.db              SQLite: activity, queries, sessions
-    ├── documents/
-    │   ├── doc_0.rcbd        RexGraph bundle per document
-    │   └── doc_1.rcbd
-    └── conversations/
-        └── {session_id}.json
-"""
+"""Workspace documents and complete observations persisted in RCDB and RCBD."""
 
 from __future__ import annotations
 
@@ -68,7 +53,36 @@ def _convs_dir(workspace: str) -> Path:
 
 
 def _db_path(workspace: str) -> str:
-    return str(_ws_dir(workspace) / "state.db")
+    return str(_ws_dir(workspace) / "state.rcdb")
+
+
+def _state_store(workspace):
+    from rcdb import LocalStore
+    from rcql import register_result_storage_codec
+    register_result_storage_codec()
+    return LocalStore(_db_path(workspace))
+
+
+def _write_result(workspace, record_id, value, *, tags=()):
+    from contextlib import closing
+    from rcql import Result
+    from agent.relational import RelationalSession
+    from rexgraph.io.publication import publication_lock
+    with publication_lock(_ws_dir(workspace)), closing(_state_store(workspace)) as store:
+        current = store.get_record(record_id)
+        return RelationalSession(store).save_result(record_id, Result((value,)),
+            expected_version=0 if current is None else current.version,
+            meta={"workspace": workspace}, tags=list(tags))
+
+
+def _read_result(workspace, record_id):
+    from contextlib import closing
+    if not Path(_db_path(workspace)).exists():
+        return None
+    with closing(_state_store(workspace)) as store:
+        snapshot = store.read_record(record_id)
+        return None if snapshot is None else snapshot.value.values[0]
+
 
 
 # Document <-> Session linkage
@@ -101,15 +115,20 @@ def load_settings(workspace: str) -> dict:
 
 def save_settings(workspace: str, settings: dict) -> dict:
     """Replace a workspace's settings."""
-    _settings_path(workspace).write_text(json.dumps(settings, indent=2))
+    from rexgraph.io.publication import publication_lock, staged_publication
+    path = _settings_path(workspace)
+    with publication_lock(path.parent), staged_publication(path) as staged:
+        staged.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     return settings
 
 
 def update_settings(workspace: str, changes: dict) -> dict:
     """Merge changes into a workspace's settings and return the result."""
-    s = load_settings(workspace)
-    s.update(changes or {})
-    return save_settings(workspace, s)
+    from rexgraph.io.publication import publication_lock
+    with publication_lock(_ws_dir(workspace)):
+        s = load_settings(workspace)
+        s.update(changes or {})
+        return save_settings(workspace, s)
 
 
 def link_doc_session(workspace: str, doc_id: str, session_id: str) -> None:
@@ -228,205 +247,116 @@ def list_document_bundles(workspace: str) -> list[str]:
     })
 
 
-# Analysis persistence (uses rexgraph/io/sql_bridge.py directly)
+# Analysis records
+
+def save_analysis(workspace: str, doc_id: str, rex, analysis: dict):
+    """Persist the complete graph and analysis in one canonical RCQL result."""
+    return _write_result(workspace, "analysis:" + doc_id, {"source": rex, "analysis": analysis})
+
+
+def load_analysis(workspace: str, doc_id: str):
+    return _read_result(workspace, "analysis:" + doc_id)
+
 
 def save_analysis_sql(workspace: str, doc_id: str, rex, analysis: dict):
-    """Save analysis results to SQLite using the SQL bridge."""
-    try:
-        from rexgraph.io.sql_bridge import (
-            get_engine,
-            write_edge_sql,
-            write_metrics_sql,
-            write_vertex_sql,
-        )
-    except ImportError:
-        logger.warning("SQL bridge not available (install sqlalchemy)")
-        return
+    """Compatibility entry point for RCDB analysis publication."""
+    return save_analysis(workspace, doc_id, rex, analysis)
 
-    engine = get_engine("sqlite:///" + _db_path(workspace))
-    prefix = doc_id.replace("-", "_").replace(".", "_")
-
-    try:
-        write_edge_sql(rex, engine, prefix + "_edges")
-    except Exception as e:
-        logger.warning("write_edge_sql failed: %s", e)
-
-    try:
-        write_vertex_sql(rex, engine, prefix + "_vertices")
-    except Exception as e:
-        logger.warning("write_vertex_sql failed: %s", e)
-
-    try:
-        write_metrics_sql(analysis, engine, prefix + "_metrics")
-    except Exception as e:
-        logger.warning("write_metrics_sql failed: %s", e)
 
 
 # Activity persistence
 
 def save_activity(workspace: str, activity_edges: list):
-    """Persist workspace activity to SQLite."""
-    try:
-        from rexgraph.io.sql_bridge import get_engine
-        engine = get_engine("sqlite:///" + _db_path(workspace))
-        sa = __import__("sqlalchemy")
+    """Publish the complete current activity snapshot as an RCDB revision."""
+    return _write_result(workspace, "activity", list(activity_edges))
 
-        meta = sa.MetaData()
-        table = sa.Table("activity", meta,
-            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-            sa.Column("user_id", sa.String),
-            sa.Column("action", sa.String),
-            sa.Column("target", sa.String),
-            sa.Column("timestamp", sa.Float),
-        )
-        meta.create_all(engine)
-
-        with engine.begin() as conn:
-            for user, action, target, ts in activity_edges:
-                conn.execute(table.insert().values(
-                    user_id=user, action=action, target=target, timestamp=ts,
-                ))
-    except ImportError:
-        # Fall back to JSON
-        path = _ws_dir(workspace) / "activity.json"
-        data = [{"user": u, "action": a, "target": t, "ts": ts}
-                for u, a, t, ts in activity_edges]
-        path.write_text(json.dumps(data))
 
 
 def load_activity(workspace: str) -> list:
-    """Load workspace activity from SQLite."""
-    try:
-        from rexgraph.io.sql_bridge import get_engine
-        engine = get_engine("sqlite:///" + _db_path(workspace))
-        sa = __import__("sqlalchemy")
+    """Read the current complete activity snapshot."""
+    value = _read_result(workspace, "activity")
+    if value is not None:
+        return value
+    path = _ws_dir(workspace) / "activity.json"
+    if path.exists():
+        data = json.loads(path.read_text())
+        return [(d["user"], d["action"], d["target"], d["ts"]) for d in data]
+    return []
 
-        meta = sa.MetaData()
-        table = sa.Table("activity", meta,
-            sa.Column("id", sa.Integer, primary_key=True),
-            sa.Column("user_id", sa.String),
-            sa.Column("action", sa.String),
-            sa.Column("target", sa.String),
-            sa.Column("timestamp", sa.Float),
-        )
-        if not sa.inspect(engine).has_table("activity"):
-            return []
-
-        with engine.connect() as conn:
-            rows = conn.execute(sa.select(table)).fetchall()
-            return [(r.user_id, r.action, r.target, r.timestamp) for r in rows]
-    except ImportError:
-        path = _ws_dir(workspace) / "activity.json"
-        if path.exists():
-            data = json.loads(path.read_text())
-            return [(d["user"], d["action"], d["target"], d["ts"]) for d in data]
-        return []
 
 
 # Query history persistence
 
 def save_query(workspace: str, user_id: str, query_text: str,
                mode: str, results: list):
-    """Persist a query and its results."""
-    try:
-        from rexgraph.io.sql_bridge import get_engine
-        engine = get_engine("sqlite:///" + _db_path(workspace))
-        sa = __import__("sqlalchemy")
+    """Publish one complete query observation with an independent identity."""
+    import uuid
+    value = {"user": user_id, "query": query_text, "mode": mode,
+             "results": results, "timestamp": time.time()}
+    return _write_result(workspace, "query:" + uuid.uuid4().hex, value, tags=("agent-query",))
 
-        meta = sa.MetaData()
-        table = sa.Table("queries", meta,
-            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-            sa.Column("user_id", sa.String),
-            sa.Column("query", sa.String),
-            sa.Column("mode", sa.String),
-            sa.Column("results_json", sa.Text),
-            sa.Column("timestamp", sa.Float),
-        )
-        meta.create_all(engine)
-
-        with engine.begin() as conn:
-            conn.execute(table.insert().values(
-                user_id=user_id, query=query_text, mode=mode,
-                results_json=json.dumps(results, default=str),
-                timestamp=time.time(),
-            ))
-    except Exception as e:
-        logger.warning("save_query failed: %s", e)
 
 
 def load_query_history(workspace: str, limit: int = 50) -> list:
-    """Load recent query history for a workspace."""
-    try:
-        from rexgraph.io.sql_bridge import get_engine
-        engine = get_engine("sqlite:///" + _db_path(workspace))
-        sa = __import__("sqlalchemy")
-
-        meta = sa.MetaData()
-        if not sa.inspect(engine).has_table("queries"):
-            return []
-
-        table = sa.Table("queries", meta, autoload_with=engine)
-        with engine.connect() as conn:
-            rows = conn.execute(
-                sa.select(table).order_by(table.c.timestamp.desc()).limit(limit)
-            ).fetchall()
-            return [
-                {"user": r.user_id, "query": r.query, "mode": r.mode,
-                 "results": json.loads(r.results_json), "timestamp": r.timestamp}
-                for r in rows
-            ]
-    except Exception:
+    """Read recent query records through typed RCQL selection."""
+    from contextlib import closing
+    from agent.record_access import read_query
+    if type(limit) is not int or not 0 <= limit <= 10000:
+        raise ValueError("query history limit must be in 0..10000")
+    if not limit or not Path(_db_path(workspace)).exists():
         return []
+    with closing(_state_store(workspace)) as store:
+        selected = read_query(store, 'FROM $db RETURN RCDB_SELECT($filters,$limit)',
+            parameters={"filters": {"tags_all": ["agent-query"]}, "limit": limit}).values[0]
+        values = [store.read_record(row["id"], version=row["version"]).value.values[0] for row in selected]
+    return sorted(values, key=lambda value: value["timestamp"], reverse=True)
+
 
 
 # Conversation persistence
 
 def save_conversation(workspace: str, session_id: str, exchanges: list):
-    """Save conversation exchanges to disk."""
-    path = _convs_dir(workspace) / (f"{session_id}.json")
-    data = []
-    for ex in exchanges:
-        data.append({
-            "n_shared": ex.n_shared,
-            "exchange_edges": ex.n_exchange_edges,
-            "kappa": ex.kappa_mean,
-            "hodge": [ex.hodge_gradient, ex.hodge_curl, ex.hodge_harmonic],
-        })
-    path.write_text(json.dumps(data, indent=2))
+    """Publish complete recorded exchange measurements in RCDB."""
+    data = [{"n_shared": ex.n_shared, "exchange_edges": ex.n_exchange_edges,
+             "kappa": ex.kappa_mean,
+             "hodge": [ex.hodge_gradient, ex.hodge_curl, ex.hodge_harmonic]} for ex in exchanges]
+    return _write_result(workspace, "conversation:" + session_id, data)
+
+
+def load_conversation(workspace: str, session_id: str):
+    return _read_result(workspace, "conversation:" + session_id)
+
 
 
 # Export
 
 def export_workspace(workspace: str, output_path: str, fmt: str = "rex"):
-    """Export an entire workspace: all documents, analysis, queries.
-
-    Formats: rex (bundle dir), json (single file), sql (SQLite copy).
-    """
+    """Export an RCDB workspace backup or a JSON observation summary."""
     ws_dir = _ws_dir(workspace)
-
-    if fmt == "sql":
-        import shutil
-        db = _db_path(workspace)
-        if os.path.exists(db):
-            shutil.copy2(db, output_path)
-            return output_path
-
     if fmt == "json":
-        export = {
-            "workspace": workspace,
-            "documents": list_document_bundles(workspace),
-            "activity": load_activity(workspace),
-            "queries": load_query_history(workspace, limit=1000),
-        }
-        Path(output_path).write_text(json.dumps(export, indent=2, default=str))
+        from rexgraph.io._compat import dumps
+        export = {"workspace": workspace, "documents": list_document_bundles(workspace),
+                  "activity": load_activity(workspace), "queries": load_query_history(workspace, limit=1000)}
+        Path(output_path).write_text(dumps(export, nan="null"))
         return output_path
-
-    if fmt == "rex":
+    if fmt in {"rex", "rcdb"}:
         import shutil
-        shutil.copytree(str(ws_dir), output_path, dirs_exist_ok=True)
+        from contextlib import closing, nullcontext
+        from rexgraph.io.publication import publication_lock
+        target = Path(output_path).resolve()
+        if target == ws_dir.resolve() or ws_dir.resolve() in target.parents:
+            raise ValueError("workspace backup must be outside its source")
+        if target.exists():
+            raise FileExistsError(target)
+        with publication_lock(ws_dir):
+            scope = closing(_state_store(workspace)) if Path(_db_path(workspace)).exists() else nullcontext(None)
+            with scope as store:
+                lock = store.write_scope() if store is not None else nullcontext()
+                with lock:
+                    shutil.copytree(ws_dir, target, ignore=shutil.ignore_patterns("state.db", "state.db-*"))
         return output_path
-
     raise ValueError(f"Unknown format: {fmt}")
+
 
 
 # Shared file browsing
@@ -438,8 +368,14 @@ def list_workspace_files(workspace: str) -> list:
     when it was saved, whether analysis exists.
     """
     docs_dir = _docs_dir(workspace)
-    files = []
+    from contextlib import closing, nullcontext
+    scope = closing(_state_store(workspace)) if Path(_db_path(workspace)).exists() else nullcontext(None)
+    with scope as store:
+        return _workspace_files(docs_dir, store)
 
+
+def _workspace_files(docs_dir, store):
+    files = []
     for entry in sorted(docs_dir.iterdir()):
         info = {"name": entry.name, "doc_id": entry.stem}
 
@@ -466,12 +402,9 @@ def list_workspace_files(workspace: str) -> list:
         else:
             continue
 
-        # Check if SQL analysis exists
-        db = _db_path(workspace)
-        if os.path.exists(db):
-            info["has_analysis"] = True
-        else:
-            info["has_analysis"] = False
+        # Check the native workspace store
+        info["has_analysis"] = (store is not None and
+            store.get_record("analysis:" + entry.stem) is not None)
 
         files.append(info)
 

@@ -263,3 +263,51 @@ See the [compiled kernel guide](core/README.md), [API reference](REFERENCE.md)
 and [dependency guide](../DEPENDENCIES.md) for supported operations, file readers
 and optional analysis packages. Core is distributed under the
 [Apache License 2.0](../LICENSE).
+
+## Ontology snapshots
+
+`OntologyState` retains a complete relational source together with its signature,
+universe, ordered axioms, interpretations and explicit evidence references.
+Snapshots are immutable. Revisions retain the selected parent, the declared
+comparison maps and an exact knowledge horizon. Declaring axioms or maps does
+not prove them; mathematical validation requires an explicitly installed provider.
+
+```python
+from fractions import Fraction
+from rexgraph import RexGraph
+from rexgraph.ontology import OntologyState
+from rexgraph.value import ExactTime
+from rexgraph.io import save_ontology, load_ontology
+
+source = RexGraph.from_graph([0], [1])
+ontology = OntologyState.create(
+    source, identity="example:types", context="observation",
+    known_at=ExactTime(Fraction(10)),
+    signature={"types": ("relation",)},
+    universe={"scope": "declared-source"},
+)
+save_ontology("types.rcbo", ontology)
+restored = load_ontology("types.rcbo")
+assert restored.digest == ontology.digest
+assert restored.to_bytes() == ontology.to_bytes()
+```
+
+The [RCBO format](io/README.md#ontology-files) preserves the selected ontology
+anchor and whole source. Ordinary RCBF, RCBD and safetensors containers can carry
+the same graph declaration through `ontology.record()`. `require_horizon` checks
+the declared information horizon; an external store's publication cutoff and
+access policy are separate checks.
+
+The optional `rexgraph.native_ontology` provider decodes explicitly enclosed
+native source histories and checks exact parent prefixes through the C++ bridge.
+Its report distinguishes this enclosure from an unproved graph-to-native map,
+arbitrary axiom verification and current native availability. Files never load
+provider code automatically.
+
+`append_native_ontology` and `add_native_ontology_declarations` create immutable
+children for an existing native component. Both require a checked `FieldSource`
+identifying the actual parent record and positive version, plus an exact knowledge
+horizon. The child retains that parent dependency and complete source history.
+Native declaration additions use explicit aspect fills or complete occurrence
+assignments and declared exact relation types. See the
+[native source guide](../bindings/cpp/README.md#native-source-revisions).

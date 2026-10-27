@@ -272,6 +272,14 @@ def refine(typed, children, context):
     if name in RECURSION:
         result, recursion_facts = refine_recursion(typed, children, context)
         facts.extend(recursion_facts)
+    from .c_workflow_contracts import ARGUMENTS as C_WORKFLOW, refine as refine_c_workflow
+    if name in C_WORKFLOW:
+        result, c_facts = refine_c_workflow(typed, children, context)
+        facts.extend(c_facts)
+    from .layer_contracts import ARGUMENTS as LAYER, refine as refine_layer
+    if name in LAYER:
+        result, layer_facts = refine_layer(typed, children, context)
+        facts.extend(layer_facts)
     from .transformation_contracts import ARGUMENTS as TRANSFORMATION, refine as refine_transformation
     if name in TRANSFORMATION:
         result, transformation_facts = refine_transformation(typed, children, context)

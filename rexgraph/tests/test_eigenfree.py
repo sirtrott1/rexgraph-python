@@ -468,7 +468,7 @@ def test_scale_free_never_fills_full_spectrum_keys_with_partial():
 
     (measure_in_eigenbasis itself ends in np.random.choice, so its returned probability is a random
     draw and cannot be compared across two decompositions, and RL_1 here is degenerate, so two
-    eigenbases need not agree mode for mode. The deterministic, degeneracy robust invariant is that
+    eigenbases need not agree mode for mode. The deterministic invariant under degeneracy is that
     the OPERATOR and its full spectrum are the same either way.)"""
     import itertools
 
@@ -492,7 +492,7 @@ def test_scale_free_never_fills_full_spectrum_keys_with_partial():
         RL_sparse = np.asarray(gs.relational_laplacian)
         assert RL_dense.shape == (nE, nE)
         assert np.allclose(RL_dense, RL_sparse, atol=1e-9)
-        # full spectra agree (sorted eigenvalues are operator invariants, robust to degeneracy)
+        # full spectra agree (sorted eigenvalues are operator invariants under degeneracy)
         wd = np.linalg.eigvalsh(RL_dense); ws = np.linalg.eigvalsh(RL_sparse)
         assert wd.shape == (nE,) and ws.shape == (nE,)
         assert np.allclose(wd, ws, atol=1e-9)

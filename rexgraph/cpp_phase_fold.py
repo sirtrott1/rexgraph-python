@@ -111,7 +111,7 @@ def validate_phase_fold_reference(value):
         {"engine_version", "engine_digest", "binding_digest", "binding_version", "scalar_policy"},
     )
     if (
-        sdk["engine_version"] != "0.2.1"
+        sdk["engine_version"] not in ("0.2.1", "0.3.0")
         or sdk["binding_version"] != "1"
         or sdk["scalar_policy"] != "gmp-rational-exact"
     ):

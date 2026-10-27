@@ -206,7 +206,8 @@ class Courier:
         with self._guard():
             if hive in self._peers:
                 raise ValueError("courier destination is already registered as a peer")
-        opened = open_store(store) if isinstance(store, str) else store
+        from agent.record_access import require_store
+        opened = open_store(store) if isinstance(store, str) else require_store(store)
         try:
             with self._guard():
                 if hive in self._peers:

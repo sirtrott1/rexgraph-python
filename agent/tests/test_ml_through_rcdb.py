@@ -17,7 +17,6 @@ from rexgraph.graph import RexGraph
 
 sklearn = pytest.importorskip("sklearn")
 analytics = pytest.importorskip("agent.analytics")
-pytest.importorskip("duckdb")
 
 
 def _corpus(store, n=120, seed=0):
@@ -39,27 +38,27 @@ def _corpus(store, n=120, seed=0):
 
 
 @pytest.fixture
-def sqlite_store(tmp_path):
+def local_store(tmp_path):
     """A local file endpoint: no server, no network, just a path.
 
     Yields so the store is closed with the test. A SQL store holds a connection pool,
     and returning it left that pool open until the collector reached it.
     """
-    store = rcdb.open_store(f"sqlite:///{tmp_path / 'rcdb.sqlite'}")
+    store = rcdb.open_store(f"local://{tmp_path / 'records.rcdb'}")
     yield store
     store.close()
 
 
-def test_a_local_sqlite_file_is_a_working_endpoint(sqlite_store, tmp_path):
-    _corpus(sqlite_store, n=20)
-    assert (tmp_path / "rcdb.sqlite").exists()
-    assert len(sqlite_store.list(limit=99)) == 20
+def test_a_local_rcdb_directory_is_a_working_endpoint(local_store, tmp_path):
+    _corpus(local_store, n=20)
+    assert (tmp_path / "records.rcdb").exists()
+    assert len(local_store.list(limit=99)) == 20
 
 
-def test_the_store_is_readable_from_another_process(sqlite_store, tmp_path):
+def test_the_store_is_readable_from_another_process(local_store, tmp_path):
     """The real persistence question. Everything else could be one process's memory."""
-    _corpus(sqlite_store, n=15)
-    uri = f"sqlite:///{tmp_path / 'rcdb.sqlite'}"
+    _corpus(local_store, n=15)
+    uri = f"local://{tmp_path / 'records.rcdb'}"
     code = (f"from agent import rcdb;s=rcdb.open_store({uri!r});"
             f"print(len(s.list(limit=999)), int(s.get('r0005').nE))")
     out = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True)
@@ -68,27 +67,29 @@ def test_the_store_is_readable_from_another_process(sqlite_store, tmp_path):
     assert int(n_records) == 15 and int(n_edges) > 0
 
 
-def test_features_come_from_the_store_not_the_objects(sqlite_store, tmp_path):
+def test_features_come_from_the_store_not_the_objects(local_store, tmp_path):
     """Reopened from disk, so nothing can arrive via the complexes still in memory."""
-    truth = _corpus(sqlite_store, n=60)
-    with closing(rcdb.open_store(f"sqlite:///{tmp_path / 'rcdb.sqlite'}")) as reopened:
+    truth = _corpus(local_store, n=60)
+    with closing(rcdb.open_store(f"local://{tmp_path / 'records.rcdb'}")) as reopened:
         view = analytics.signature_view(reopened)
-        rows = view.sql("SELECT id, nV, nE, betti0, betti1, kappa_mean FROM signatures")
+        rows = [tuple(row[key] for key in ("id", "nV", "nE", "betti0", "betti1", "kappa_mean"))
+                for row in view.rows()]
     assert len(rows) == 60
     assert all(r[0] in truth for r in rows)
     assert {r[2] for r in rows} != {0}, "every edge count came back zero"
 
 
-def test_a_baseline_fits_on_what_the_store_returned(sqlite_store, tmp_path):
+def test_a_baseline_fits_on_what_the_store_returned(local_store, tmp_path):
     from sklearn.dummy import DummyRegressor
     from sklearn.linear_model import Ridge
     from sklearn.metrics import r2_score
     from sklearn.model_selection import KFold
 
-    truth = _corpus(sqlite_store, n=150)
-    with closing(rcdb.open_store(f"sqlite:///{tmp_path / 'rcdb.sqlite'}")) as reopened:
+    truth = _corpus(local_store, n=150)
+    with closing(rcdb.open_store(f"local://{tmp_path / 'records.rcdb'}")) as reopened:
         view = analytics.signature_view(reopened)
-        rows = view.sql("SELECT id, nV, nE, betti0, betti1, kappa_mean FROM signatures")
+        rows = [tuple(row[key] for key in ("id", "nV", "nE", "betti0", "betti1", "kappa_mean"))
+                for row in view.rows()]
     X = np.array([[r[1], r[2], r[3], r[4], r[5]] for r in rows], float)
     y = np.array([truth[r[0]] for r in rows], float)
 
@@ -108,7 +109,7 @@ def test_a_baseline_fits_on_what_the_store_returned(sqlite_store, tmp_path):
 
 @pytest.mark.parametrize("lib", ["lightgbm", "xgboost"])
 def test_the_gradient_boosted_baselines_run_on_store_features(
-        sqlite_store, tmp_path, lib, monkeypatch):
+        local_store, tmp_path, lib, monkeypatch):
     # joblib probes for physical cores and warns when it cannot find them, which is the
     # normal case in a container. Naming the ceiling answers the probe instead of
     # filtering it, and it is set here rather than in production because it describes
@@ -116,10 +117,11 @@ def test_the_gradient_boosted_baselines_run_on_store_features(
     # on bare metal where the probe does not fire, and in a sandbox where it does.
     monkeypatch.setenv("LOKY_MAX_CPU_COUNT", "1")
     mod = pytest.importorskip(lib)
-    truth = _corpus(sqlite_store, n=120)
-    with closing(rcdb.open_store(f"sqlite:///{tmp_path / 'rcdb.sqlite'}")) as reopened:
+    truth = _corpus(local_store, n=120)
+    with closing(rcdb.open_store(f"local://{tmp_path / 'records.rcdb'}")) as reopened:
         view = analytics.signature_view(reopened)
-        rows = view.sql("SELECT id, nV, nE, betti0, betti1, kappa_mean FROM signatures")
+        rows = [tuple(row[key] for key in ("id", "nV", "nE", "betti0", "betti1", "kappa_mean"))
+                for row in view.rows()]
     X = np.array([[r[1], r[2], r[3], r[4], r[5]] for r in rows], float)
     y = np.array([truth[r[0]] for r in rows], float)
 
@@ -133,12 +135,12 @@ def test_the_gradient_boosted_baselines_run_on_store_features(
     assert np.all(np.isfinite(pred))
 
 
-def test_a_model_can_be_trained_on_the_corpus_as_it_stood(sqlite_store, tmp_path):
+def test_a_model_can_be_trained_on_the_corpus_as_it_stood(local_store, tmp_path):
     """The temporal claim, made concrete: a feature matrix at a past time excludes
     what had not been ingested yet, so a model trained on it cannot see the future."""
     import time
 
-    _corpus(sqlite_store, n=40, seed=1)
+    _corpus(local_store, n=40, seed=1)
     time.sleep(0.05)
     cutoff = time.time()
     time.sleep(0.05)
@@ -149,29 +151,29 @@ def test_a_model_can_be_trained_on_the_corpus_as_it_stood(sqlite_store, tmp_path
         rex = RexGraph(sources=np.zeros(size, np.int32),
                        targets=np.arange(1, size + 1, dtype=np.int32))
         rex._agent_meta = {"vertex_labels": labels}
-        sqlite_store.put(f"r{k:04d}", rex,
+        local_store.put(f"r{k:04d}", rex,
                          meta={"doc_id": f"r{k:04d}", "vertex_labels": labels})
 
-    now = analytics.signature_view(sqlite_store)
-    then = analytics.signature_view(sqlite_store, as_of=cutoff)
+    now = analytics.signature_view(local_store)
+    then = analytics.signature_view(local_store, as_of=cutoff)
     assert len(now) == 60
     assert len(then) == 40, "the past view saw records that did not exist yet"
 
 
-def test_a_revised_record_trains_on_its_old_shape_when_asked(sqlite_store, tmp_path):
+def test_a_revised_record_trains_on_its_old_shape_when_asked(local_store, tmp_path):
     import time
 
-    _corpus(sqlite_store, n=20, seed=2)
-    before = int(sqlite_store.get("r0003").nE)
+    _corpus(local_store, n=20, seed=2)
+    before = int(local_store.get("r0003").nE)
     time.sleep(0.05)
     cutoff = time.time()
     time.sleep(0.05)
     rex = RexGraph(sources=np.zeros(3, np.int32), targets=np.arange(1, 4, dtype=np.int32))
     rex._agent_meta = {"vertex_labels": ["hub3", "a", "b", "c"]}
-    sqlite_store.put("r0003", rex, meta={"doc_id": "r0003",
+    local_store.put("r0003", rex, meta={"doc_id": "r0003",
                                          "vertex_labels": ["hub3", "a", "b", "c"]})
 
-    now = analytics.signature_view(sqlite_store)
-    then = analytics.signature_view(sqlite_store, as_of=cutoff)
-    assert now.sql("SELECT nE FROM signatures WHERE id='r0003'")[0][0] == 3
-    assert then.sql("SELECT nE FROM signatures WHERE id='r0003'")[0][0] == before
+    now = analytics.signature_view(local_store)
+    then = analytics.signature_view(local_store, as_of=cutoff)
+    assert next(row["nE"] for row in now.rows() if row["id"] == "r0003") == 3
+    assert next(row["nE"] for row in then.rows() if row["id"] == "r0003") == before

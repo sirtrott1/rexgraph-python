@@ -63,8 +63,14 @@ def _program_types():
 def bind_sources(value, references, *, strict=False):
     """Rebind checked retained source declarations, preserving their identities."""
     from rexgraph.tensor_field import FieldSource
+    from rexgraph.source_binding import CppSourceReference, CppAlgebraicSourceReference
     from rexgraph.selection import Selection
     from .task_outcome import TaskOutcome
+    from .c_workflow import CWorkflow,CValue,CInterface
+    if type(value) in (CWorkflow,CValue,CInterface):
+        # Their original graph owns native objects; external dependency records
+        # are checked against current bindings on execution. Keep shared owners.
+        return value
     if isinstance(value, TaskOutcome):
         # Its complete native archive owns these C++ publications. They are
         # admitted under current native authority on use, never rebound to a
@@ -77,6 +83,16 @@ def bind_sources(value, references, *, strict=False):
         if strict:
             raise ValueError("portable selection has an unbound source dependency")
         value.check_state()
+        return value
+    if isinstance(value, (CppSourceReference, CppAlgebraicSourceReference)):
+        value.check()
+        identity = (value.state_digest, value.record_id, value.version)
+        if identity in references:
+            return value.bind(references[identity])
+        if value.source is not None:
+            return value
+        if strict:
+            raise ValueError("portable native result has an unbound source dependency")
         return value
     if isinstance(value, FieldSource):
         identity = (value.state_digest, value.record_id, value.version)
@@ -97,25 +113,84 @@ def bind_sources(value, references, *, strict=False):
 
 
 def _bindings(records, graphs, value, depth):
-    from rexgraph.tensor_field import FieldSource
+    from rexgraph.source_binding import source_from_record
     from .source_context import field_references
     if not isinstance(records, tuple):
         raise ValueError("invalid portable result source bindings")
-    declared = {(ref.state_digest, ref.record_id, ref.version) for ref in field_references(value)}
+    declared = {ref.coefficient_digest for ref in field_references(value)}
     bindings = {}
     for record in records:
-        if not isinstance(record, tuple) or len(record) != 2 or not isinstance(record[0], dict) or set(record[0]) != {"state_digest", "record_id", "version"}:
+        if not isinstance(record, tuple) or len(record) != 2 or not isinstance(record[0], dict):
             raise ValueError("invalid portable source binding record")
+        ref = source_from_record(record[0], allow_cpp=True)
+        if ref.coefficient_digest not in declared:
+            raise ValueError("unclaimed portable source binding")
         source = _node(record[1], graphs, depth+1)
-        from rexgraph.graph import RexGraph
-        if not isinstance(source, RexGraph):
-            raise ValueError("portable source binding requires a sealed graph")
-        ref = FieldSource(source, **record[0])
+        if source is None:
+            raise ValueError("portable source binding requires its sealed owner")
+        ref = ref.bind(source)
         key = (ref.state_digest, ref.record_id, ref.version)
-        if key not in declared or key in bindings:
+        if key in bindings:
             raise ValueError("unclaimed or duplicate portable source binding")
         bindings[key] = source
     return bind_sources(value, bindings)
+
+
+def _graded_components(source, components):
+    from rexgraph.cells import _grade_sizes
+    from rexgraph.cochain import Chain
+    from rexgraph.graph import RexGraph
+    if not isinstance(source, RexGraph) or not isinstance(components, tuple):
+        raise ValueError("portable graded Chain requires its complete source and components")
+    sizes = _grade_sizes(source)
+    if len(components) != len(sizes):
+        raise ValueError("portable graded Chain must retain every carried grade")
+    trailing = None
+    for grade, (component, size) in enumerate(zip(components, sizes, strict=True)):
+        if (type(component) is not Chain or component.grade != grade
+                or component.source is not source or component.cell_keys is not None):
+            raise ValueError("portable graded Chain components differ from their ordered source bases")
+        shape = getattr(component.values, "shape", ())
+        if len(shape) not in (1, 2) or shape[0] != size:
+            raise ValueError("portable graded Chain coefficients differ from their source grade")
+        if trailing is not None and shape[1:] != trailing:
+            raise ValueError("portable graded Chain components have different block axes")
+        trailing = shape[1:]
+
+
+def _program_result(value):
+    from .executor import Result
+    from .program import _name
+    from rexgraph.tensor_field import FieldSource
+    if (not isinstance(value.values, tuple) or not isinstance(value.steps, tuple)
+            or not 0 < len(value.steps) <= 10000
+            or type(value.program_digest) is not str or len(value.program_digest) != 64
+            or any(c not in "0123456789abcdef" for c in value.program_digest)
+            or not isinstance(value.aliases, tuple) or len(value.aliases) != len(value.values)
+            or any(type(a) is not str or not a for a in value.aliases)
+            or len(set(value.aliases)) != len(value.aliases)
+            or not isinstance(value.dependencies, tuple)
+            or any(not isinstance(ref, FieldSource) for ref in value.dependencies)
+            or not isinstance(value.sources, tuple)):
+        raise ValueError("invalid portable program result")
+    names = set()
+    for step in value.steps:
+        if not isinstance(step, tuple) or len(step) != 2 or not isinstance(step[1], Result):
+            raise ValueError("invalid portable program result step")
+        _name(step[0])
+        if step[0] in names:
+            raise ValueError("duplicate portable program result step")
+        names.add(step[0])
+    for ref in value.sources:
+        if not isinstance(ref, dict) or set(ref) != {"state_digest", "record_id", "record_version", "policy_digest"}:
+            raise ValueError("invalid portable program source receipt")
+        for key in ("state_digest", "policy_digest"):
+            digest = ref[key]
+            if digest is not None and (type(digest) is not str or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)):
+                raise ValueError("invalid portable program source digest")
+        if ((ref["record_id"] is not None and type(ref["record_id"]) is not str)
+                or (ref["record_version"] is not None and (type(ref["record_version"]) is not int or ref["record_version"] < 0))):
+            raise ValueError("invalid portable program source revision")
 
 
 class _Encoder:
@@ -132,6 +207,7 @@ class _Encoder:
         from rexgraph.graph import TemporalRex
         from rexgraph.relations import Relations
         from rexgraph.selection import Selection, Lineage
+        from rexgraph.weighted_dirac import GradedChain
         if isinstance(value, RexGraph):
             identity = id(value)
             if identity not in self.positions:
@@ -140,6 +216,30 @@ class _Encoder:
                 self.positions[identity] = len(self.graphs)
                 self.graphs.append({"header": state.header, "tensors": state.tensors})
             return ("graph", self.positions[identity])
+        if type(value).__module__ == "rexgraph_cpp._bridge" and type(value).__name__ == "NativeSource":
+            from rexgraph_cpp import NativeSource
+            from rexgraph.source_binding import CppSourceIdentity
+            if type(value) is not NativeSource:
+                raise TypeError("portable native source requires the canonical owner")
+            identity = id(value)
+            if identity not in self.positions:
+                self.positions[identity] = len(self.graphs)
+                self.graphs.append({"kind": "cpp_source", "version": 1,
+                    "identity": CppSourceIdentity.from_record(value.identity).as_record(),
+                    "archive": value.archive})
+            return ("native-source", self.positions[identity])
+        from .c_workflow import CWorkflow,CValue,CInterface
+        if type(value) is CValue:
+            return ("c-value",self.node(value.workflow,depth+1),value.index)
+        if type(value) is CInterface:
+            owner=value._c_owner or CWorkflow.from_bytes(value.declaration['workflow'])
+            return ("c-interface",self.node(owner,depth+1),value.declaration['key'],value.declaration['proof'])
+        if type(value) is CWorkflow:
+            identity=id(value)
+            if identity not in self.positions:
+                self.positions[identity]=len(self.graphs)
+                self.graphs.append({"kind":"c_workflow","version":1,"data":value.data})
+            return ("c-workflow",self.positions[identity])
         if isinstance(value, FieldSource):
             value.check()
             return ("source", value.as_record(), self.node(value.source, depth+1))
@@ -160,14 +260,34 @@ class _Encoder:
         for kind, (types, encode, _) in _component_codecs().items():
             if isinstance(value, types):
                 return ("component", kind, self.node(encode(value, native=True), depth+1), self.bindings(value, depth))
+        from rexgraph.ontology import OntologyState
+        if isinstance(value, OntologyState):
+            return ("ontology", value.to_bytes())
+        from .declaration_codec import declaration_types
+        if type(value) in declaration_types().values():
+            return ("native-declaration", type(value).__name__, value.data)
         if type(value) in _program_types().values():
             return ("program", type(value).__name__, value.to_bytes())
+        from .program import ProgramResult
+        from .executor import Result
+        if type(value) is ProgramResult:
+            _program_result(value)
+            return ("program-result", 1, self.node(value.values, depth+1),
+                    self.node(value.steps, depth+1), value.program_digest,
+                    self.node(value.sources, depth+1), value.aliases,
+                    self.node(value.dependencies, depth+1))
+        if type(value) is Result:
+            return ("result", 1, _result_record(self, value, depth+1))
         from .recursive_program import RecursionResult
         if isinstance(value, RecursionResult):
             return ("recursion", self.node(value.to_record(), depth+1), self.bindings(value, depth))
         if type(value) in (Chain, Cochain):
             return (type(value).__name__, value.grade, self.node(value.values, depth+1),
                     self.node(value.cell_keys, depth+1), self.node(value.source, depth+1))
+        if type(value) is GradedChain:
+            _graded_components(value.source, value.components)
+            return ("GradedChain", 1, self.node(value.source, depth+1),
+                    self.node(value.components, depth+1))
         if type(value) in _SYNTAX.values():
             return ("syntax", type(value).__name__,
                     {field.name: self.node(getattr(value, field.name), depth+1) for field in fields(value)})
@@ -192,6 +312,8 @@ class _Encoder:
                 key = (ref.state_digest, ref.record_id, ref.version)
                 if key not in references:
                     references[key] = (ref.as_record(), self.node(ref.source, depth+1))
+                elif references[key][0] != ref.as_record():
+                    raise ValueError("source bindings have conflicting native identities")
         return tuple(references.values())
 
 
@@ -202,15 +324,31 @@ def _node(record, graphs, depth=0):
     child = lambda value: _node(value, graphs, depth+1)
     if tag == "value" and len(record) == 2:
         return unpack_value(record[1])
-    if tag == "graph" and len(record) == 2 and type(record[1]) is int and 0 <= record[1] < len(graphs):
-        return graphs[record[1]]
-    if tag == "source" and len(record) == 3 and isinstance(record[1], dict) and set(record[1]) == {"state_digest", "record_id", "version"}:
-        from rexgraph.tensor_field import FieldSource
+    if tag in {"graph", "native-source"} and len(record) == 2 and type(record[1]) is int and 0 <= record[1] < len(graphs):
         from rexgraph.graph import RexGraph
+        source = graphs[record[1]]
+        if (tag == "graph" and not isinstance(source, RexGraph)) or (tag == "native-source" and not (type(source).__module__ == "rexgraph_cpp._bridge" and type(source).__name__ == "NativeSource")):
+            raise ValueError("portable source tag does not match its basis")
+        return source
+    if tag == "c-workflow" and len(record)==2 and type(record[1]) is int and 0<=record[1]<len(graphs):
+        from .c_workflow import CWorkflow
+        if type(graphs[record[1]]) is not CWorkflow:raise ValueError("C graph tag differs from its owner")
+        return graphs[record[1]]
+    if tag == "c-value" and len(record)==3:
+        from .c_workflow import CWorkflow
+        owner=child(record[1])
+        if type(owner) is not CWorkflow:raise ValueError("C value requires a declaration owner")
+        return owner.value(record[2])
+    if tag == "c-interface" and len(record)==4:
+        from .c_workflow import CWorkflow,CInterface
+        owner=child(record[1])
+        if type(owner) is not CWorkflow:raise ValueError("C interface requires a declaration owner")
+        return CInterface.declare(record[2],owner.value(record[3]))
+    if tag == "source" and len(record) == 3 and isinstance(record[1], dict):
+        from rexgraph.source_binding import source_from_record
+        ref = source_from_record(record[1], allow_cpp=True)
         source = child(record[2])
-        if source is not None and not isinstance(source, RexGraph):
-            raise ValueError("invalid portable field source")
-        return FieldSource(source, **record[1])
+        return ref if source is None else ref.bind(source)
     if tag == "component" and len(record) == 4 and type(record[1]) is str and record[1] in _component_codecs():
         tensors = child(record[2])
         if not isinstance(tensors, dict):
@@ -268,8 +406,24 @@ def _node(record, graphs, depth=0):
     if tag == "temporal" and len(record) == 3:
         from rexgraph.temporal_state import TemporalState, from_temporal_state
         return from_temporal_state(TemporalState(record[2], record[1]))
+    if tag == "ontology" and len(record) == 2:
+        from rexgraph.ontology import OntologyState
+        return OntologyState.from_bytes(record[1])
+    if tag == "native-declaration":
+        from .declaration_codec import declaration_types
+        if len(record) != 3 or type(record[1]) is not str or record[1] not in declaration_types() or type(record[2]) is not bytes:
+            raise ValueError("unknown finite native declaration")
+        return declaration_types()[record[1]](record[2])
     if tag == "program" and len(record) == 3 and type(record[1]) is str and record[1] in _program_types():
         return _program_types()[record[1]].from_bytes(record[2])
+    if tag == "program-result" and len(record) == 8 and type(record[1]) is int and record[1] == 1:
+        from .program import ProgramResult
+        value = ProgramResult(child(record[2]), child(record[3]), record[4],
+                              child(record[5]), record[6], child(record[7]))
+        _program_result(value)
+        return value
+    if tag == "result" and len(record) == 3 and type(record[1]) is int and record[1] == 1:
+        return _decode_result(record[2], graphs, depth+1)
     if tag == "recursion" and len(record) == 3:
         from .recursive_program import RecursionResult
         value = RecursionResult.from_record(child(record[1]))
@@ -285,6 +439,13 @@ def _node(record, graphs, depth=0):
             if not isinstance(source, RexGraph) or not hasattr(values, "shape") or len(values.shape) == 0 or values.shape[0] != cell_count(source, record[1]):
                 raise ValueError("result coefficients do not match their source grade")
         return (Chain if tag == "Chain" else Cochain)(record[1], values, keys, source)
+    if tag == "GradedChain" and len(record) == 4:
+        from rexgraph.weighted_dirac import GradedChain
+        if type(record[1]) is not int or record[1] != 1:
+            raise ValueError("unknown portable graded Chain version")
+        source, components = child(record[2]), child(record[3])
+        _graded_components(source, components)
+        return GradedChain(source, components)
     if tag == "syntax" and len(record) == 3 and type(record[1]) is str:
         cls = _SYNTAX.get(record[1])
         if cls is None or not isinstance(record[2], dict) or set(record[2]) != {f.name for f in fields(cls)}:
@@ -327,21 +488,27 @@ def _metadata(record, count):
         raise ValueError("unknown result arithmetic declaration")
 
 
-def pack_result(result, *, max_bytes=_LIMIT):
+def _result_record(encoder, result, depth=0):
     from .executor import Result
     if not isinstance(result, Result):
         raise TypeError("pack_result requires an RCQL Result")
+    node = lambda value: encoder.node(value, depth)
+    record = {"version": 1, "values": node(result.values),
+              "rewrites": tuple({"before": node(r.before), "after": node(r.after),
+                                  "reason": r.reason, "predicates": node(r.predicates)} for r in result.rewrites),
+              "plan": result.plan, "exactness": tuple(None if v is None else v.value for v in result.exactness),
+              "aliases": result.aliases, "native_plan": node(result.native_plan),
+              "provenance": node(result.provenance), "execution": node(result.execution)}
+    _metadata(record, len(result.values))
+    return record
+
+
+def pack_result(result, *, max_bytes=_LIMIT):
     if type(max_bytes) is not int or max_bytes <= 0:
         raise ValueError("result byte limit must be a positive integer")
     encoder = _Encoder()
-    record = {"version": 1, "values": encoder.node(result.values),
-              "rewrites": tuple({"before": encoder.node(r.before), "after": encoder.node(r.after),
-                                  "reason": r.reason, "predicates": encoder.node(r.predicates)} for r in result.rewrites),
-              "plan": result.plan, "exactness": tuple(None if v is None else v.value for v in result.exactness),
-              "aliases": result.aliases, "native_plan": encoder.node(result.native_plan),
-              "provenance": encoder.node(result.provenance), "execution": encoder.node(result.execution),
-              "graphs": encoder.graphs}
-    _metadata(record, len(result.values))
+    record = _result_record(encoder, result)
+    record["graphs"] = encoder.graphs
     raw = pack_value(record)
     payload = _MAGIC + hashlib.sha256(raw).digest() + raw
     if len(payload) > max_bytes:
@@ -380,6 +547,17 @@ def _record_cell_counts(payload):
                 raise ValueError("invalid result cell counts")
             counts[key] = counts.get(key, 0)+value
     for graph in record["graphs"]:
+        if isinstance(graph,dict) and graph.get("kind")=="c_workflow":
+            # Native C carriers have their own receiving/arithmetical limits;
+            # they are not extra RexGraph cells in RCDB admission counts.
+            _decode_c_workflow(graph)
+            continue
+        if isinstance(graph, dict) and graph.get("kind") == "cpp_source":
+            owner = _decode_cpp_source(graph)
+            sizes = tuple(len(keys) for keys in owner.identity["coordinates"])
+            for key, size in zip(("nV", "nE", "nF"), (*sizes, 0, 0, 0), strict=False):
+                counts[key] = counts.get(key, 0)+size
+            continue
         if not isinstance(graph, dict) or set(graph) != {"header", "tensors"}:
             raise ValueError("invalid result graph state")
         add(graph["header"], graph["tensors"], "RexGraph")
@@ -397,17 +575,57 @@ def _record_cell_counts(payload):
     return counts
 
 
+def _decode_c_workflow(graph):
+    from .c_workflow import CWorkflow
+    if set(graph)!={'kind','version','data'} or type(graph['version']) is not int or graph['version']!=1:
+        raise ValueError("unknown C result graph schema")
+    owner=CWorkflow.from_bytes(graph['data'])
+    owner.native()  # Fresh native owners and certificates, once per graph table row.
+    return owner
+
+
+def _decode_cpp_source(record):
+    """Decode one closed native archive; callbacks and execution authority are absent."""
+    from rexgraph.source_binding import CppSourceIdentity
+    if (set(record) != {"kind", "version", "identity", "archive"}
+            or record["kind"] != "cpp_source" or type(record["version"]) is not int
+            or record["version"] != 1 or type(record["archive"]) is not bytes):
+        raise ValueError("invalid portable native source basis")
+    declared = CppSourceIdentity.from_record(record["identity"])
+    if hashlib.sha256(record["archive"]).hexdigest() != declared.archive_digest:
+        raise ValueError("portable native archive differs from its declaration")
+    from rexgraph_cpp import NativeSource
+    owner = NativeSource(record["archive"], max_bytes=_LIMIT)
+    if CppSourceIdentity.from_record(owner.identity) != declared:
+        raise ValueError("portable native source identity differs from decoded data")
+    return owner
+
+
 def unpack_result(payload, *, max_bytes=_LIMIT):
-    from .executor import Result
-    from .optimizer import Rewrite
     record = _unpack_record(payload, max_bytes=max_bytes)
     from rexgraph.state import RexState, from_state
     graphs = []
     for graph in record["graphs"]:
+        if isinstance(graph,dict) and graph.get("kind")=="c_workflow":
+            graphs.append(_decode_c_workflow(graph))
+            continue
+        if isinstance(graph, dict) and graph.get("kind") == "cpp_source":
+            graphs.append(_decode_cpp_source(graph))
+            continue
         if not isinstance(graph, dict) or set(graph) != {"header", "tensors"}:
             raise ValueError("invalid result graph state")
         graphs.append(from_state(RexState(graph["tensors"], graph["header"])))
-    values = _node(record["values"], graphs)
+    return _decode_result({k: v for k, v in record.items() if k != "graphs"}, graphs)
+
+
+def _decode_result(record, graphs, depth=0):
+    from .executor import Result
+    from .optimizer import Rewrite
+    names = {"version", "values", "rewrites", "plan", "exactness", "aliases", "native_plan", "provenance", "execution"}
+    if not isinstance(record, dict) or set(record) != names or type(record["version"]) is not int or record["version"] != 1:
+        raise ValueError("unknown nested result record version or fields")
+    node = lambda value: _node(value, graphs, depth)
+    values = node(record["values"])
     if not isinstance(values, tuple):
         raise ValueError("result values must be an ordered tuple")
     _metadata(record, len(values))
@@ -417,12 +635,12 @@ def unpack_result(payload, *, max_bytes=_LIMIT):
     for rewrite in record["rewrites"]:
         if not isinstance(rewrite, dict) or set(rewrite) != {"before", "after", "reason", "predicates"} or type(rewrite["reason"]) is not str:
             raise ValueError("invalid result rewrite record")
-        before, after = (_node(rewrite[k], graphs) for k in ("before", "after"))
-        predicates = _node(rewrite["predicates"], graphs)
+        before, after = (node(rewrite[k]) for k in ("before", "after"))
+        predicates = node(rewrite["predicates"])
         if not isinstance(before, ast.Expr) or not isinstance(after, ast.Expr) or not isinstance(predicates, tuple) or any(not isinstance(p, PredicateResult) for p in predicates):
             raise ValueError("invalid result rewrite syntax or predicates")
         rewrites.append(Rewrite(before, after, rewrite["reason"], predicates))
-    native_plan, provenance, execution = (_node(record[k], graphs) for k in ("native_plan", "provenance", "execution"))
+    native_plan, provenance, execution = (node(record[k]) for k in ("native_plan", "provenance", "execution"))
     if (native_plan is not None and not isinstance(native_plan, dict)) or any(
         not isinstance(items, tuple) or any(not isinstance(v, dict) for v in items) for items in (provenance, execution)
     ):

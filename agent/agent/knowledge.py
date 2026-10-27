@@ -105,6 +105,8 @@ class _Union:
 
 def _part_from_edge_construction(ec: EdgeConstruction, origin: str,
                                  kind: str) -> Part:
+    if ec.branching:
+        raise ValueError("knowledge triples cannot represent wider relations; bind the complete source through RCQL")
     labels = list(ec.vertex_labels)
     edges = []
     for k in range(ec.nE):
@@ -131,6 +133,8 @@ def _part_from_rex(rex, origin: str, kind: str) -> Part:
     none is indexed by position, which joins to nothing and says so rather than
     inventing names that would collide with a real identifier.
     """
+    if rex.sources is None or rex.targets is None:
+        raise ValueError("knowledge triples require pair relations; bind the complete source through RCQL")
     meta = getattr(rex, "_agent_meta", {}) or {}
     labels = list(meta.get("vertex_labels") or [])
     if len(labels) < int(rex.nV):

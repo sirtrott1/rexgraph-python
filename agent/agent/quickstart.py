@@ -33,13 +33,11 @@ _TEXTUAL = {".txt", ".md", ".rst", ".json", ".csv", ".tsv", ".pdf"}
 
 #: optional packages, what each one adds, and whether anything here needs them.
 OPTIONAL = {
-    "duckdb": "columnar queries over signatures (group-by, aggregates)",
     "s3fs": "s3:// object storage",
     "gcsfs": "gs:// object storage",
     "adlfs": "az:// object storage",
     "h5py": "HDF5 and AnnData (.h5ad) containers",
     "pyarrow": "Arrow export, parquet",
-    "sqlalchemy": "sql:// backends (postgres, mysql, sqlite)",
 }
 
 
@@ -155,8 +153,6 @@ def plan(path: str = ".", *, store: str | None = None) -> Plan:
         depth, why = "quick", f"{n} readable files: use quick analysis for the initial ingestion"
 
     missing = {}
-    if not _have("duckdb"):
-        missing["duckdb"] = OPTIONAL["duckdb"]
     if ".h5ad" in scan["counts"] or ".loom" in scan["counts"] or ".h5" in scan["counts"]:
         if not _have("h5py"):
             missing["h5py"] = OPTIONAL["h5py"]

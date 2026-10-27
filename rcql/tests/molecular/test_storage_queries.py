@@ -83,7 +83,7 @@ def test_bad_named_input_and_denied_destination(tmp_path):
         with pytest.raises(PermissionError):ex.execute(query(source('g'),call('MOLECULAR_DELTA','chain',denied,'chain'),explain=explain))
 
 
-@pytest.mark.parametrize('backend',['memory://','file://','rex://','sql://'])
+@pytest.mark.parametrize('backend',['memory://','file://','rex://'])
 def test_store_versions_conditions_and_source_history(tmp_path,backend):
     pytest.importorskip("rdkit")
     if backend=='sql://':
@@ -119,6 +119,40 @@ def test_store_versions_conditions_and_source_history(tmp_path,backend):
             f=Executor(sources={'db':db}).execute(parse('FROM RCDB_VERSION($db,"molecules",2) RETURN MOLECULAR_CONFORMER("chain","frame")')).values[0]
             assert f.values[3,2]==1
         finally:db.close()
+
+
+def test_sql_molecular_records_use_standalone_storage_and_reject_agent_ingest(tmp_path):
+    pytest.importorskip("rdkit")
+    url = 'sqlite:///' + str(tmp_path / 'molecules.sqlite')
+    db = open_store(url)
+    try:
+        with pytest.raises(ValueError, match='not a SQL backend'):
+            ingest_molecules(db, tmp_path / 'unread.smi', document_id='molecules')
+        assert db.get_record('molecules') is None
+        conditions = {'chain': {'temperature': {'value': '298.15', 'unit': 'K',
+                       'origin': 'synthetic', 'source': 'fixture'}}}
+        _, _, first = make(tmp_path, conformers={'chain': {'frame': declaration(0)}}, conditions=conditions)
+        db.commit_mutation('molecules', first, expected_version=0, tx_time=20, analytics=False)
+        original = db.read_record('molecules', as_of=25)
+        conditions['chain']['temperature']['value'] = '300.15'
+        _, _, second = make(tmp_path, conformers={'chain': {'frame': declaration(1)}}, conditions=conditions)
+        db.commit_mutation('molecules', second, expected_version=1, tx_time=30, analytics=False)
+        assert db.read_record('molecules', as_of=25).state_digest == original.state_digest
+        with pytest.raises(VersionConflictError):
+            db.commit_mutation('molecules', first, expected_version=1, analytics=False)
+        assert db.verify_commits('molecules')
+    finally:
+        db.close()
+    db = open_store(url)
+    try:
+        runtime = Executor(sources={'db': db})
+        old = runtime.execute(parse('FROM RCDB_VERSION($db,"molecules",1) RETURN MOLECULAR_CONFORMER("chain","frame")')).values[0]
+        current = runtime.execute(parse('FROM RCDB_VERSION($db,"molecules",2) RETURN MOLECULAR_CONFORMER("chain","frame"), MOLECULAR_INFO("chain")')).values
+        assert old.source.version == 1 and old.values[3, 2] == 0
+        assert current[0].source.version == 2 and current[0].values[3, 2] == 1
+        assert Q(*map(int, current[1]['conditions']['temperature']['value'])) == Q(6003, 20)
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize('extension',['.rcbd','.safetensors'])

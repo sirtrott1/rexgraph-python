@@ -17,20 +17,9 @@ def _parse_schema(body: dict):
         return sc.parse_schema_json(body["spec"])
     if body.get("mongo"):
         return sc.infer_mongo_schema(body["mongo"])
-    # Both of these hand a caller supplied URI to a live connection, so they answer to
-    # the same allow list dbmanager and connectors do. Without it the REXGRAPH_DB_SAFE
-    # and host policies were simply absent on this router.
-    from agent.server.dbguard import check_db_uri
-    if body.get("mongo_connection"):
-        check_db_uri(body["mongo_connection"])
-        return sc.reflect_mongo(body["mongo_connection"], body.get("db") or "test",
-                                sample=int(body.get("sample", 100)))
-    if body.get("connection"):
-        check_db_uri(body["connection"])
-        return sc.reflect_schema(body["connection"])
-    raise HTTPException(
-        400, "Provide 'ddl' (+optional 'dialect'), 'spec', 'mongo', "
-             "'connection', or 'mongo_connection'")
+    if body.get("connection") or body.get("mongo_connection"):
+        raise HTTPException(400, "Load an offline schema declaration; Agent uses RCDB records")
+    raise HTTPException(400, "Provide ddl, spec or an in-memory mongo structure")
 
 
 @router.post("/analyze")
@@ -40,7 +29,7 @@ async def analyze_schema(body: dict = Body(...)):
     Provide one of:
       * ``ddl``        - CREATE TABLE / FOREIGN KEY SQL text
       * ``spec``       - JSON schema {tables:[{name,columns,primary_key,foreign_keys}]}
-      * ``connection`` - a SQLAlchemy URL to reflect a live database
+      * ``mongo``      - an in-memory document structure
 
     Optional: ``store_id`` (persist the schema complex in the RCDB) and
     ``tags``. Returns circular dependency chains, the Hodge hierarchy/
@@ -118,9 +107,8 @@ async def schema_strain_route(body: dict = Body(...)):
     """Data forced strain: weight the schema by real data magnitudes and
     measure the geometric strain the data imposes.
 
-    Body: a schema (ddl/spec/mongo/connection) plus either explicit
-    ``weights`` {"from->to": cardinality} or a ``connection`` to pull live
-    cardinality from. Returns the heat map (how much / where), per relation
+    Body: an offline schema (ddl/spec/mongo) with explicit
+    ``weights`` {"from->to": cardinality}. Returns the heat map (how much / where), per relation
     attribution (who / what), and effective root causes (how many / coupled).
     """
     try:
@@ -131,14 +119,8 @@ async def schema_strain_route(body: dict = Body(...)):
         raise HTTPException(400, f"Could not read schema: {e}") from e
 
     weights = body.get("weights")
-    row_counts = None
-    if not weights and body.get("connection"):
-        try:
-            weights, row_counts = sc.pull_cardinality_stats(body["connection"], model, approximate=bool(body.get("approximate", False)))
-        except Exception as e:
-            raise HTTPException(400, f"Could not pull statistics: {e}") from e
+    if body.get("connection"):
+        raise HTTPException(400, "Supply declared weights from RCDB; live SQL statistics are not supported")
 
     result = sc.schema_strain(model, weights=weights)
-    if row_counts is not None:
-        result["row_counts"] = row_counts
     return result

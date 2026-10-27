@@ -5,6 +5,16 @@ from agent import agent_complex, rcdb
 from agent import hive as hivemod
 
 
+def _compare(data, **kwargs):
+    if not isinstance(data, dict) or not {"actual", "expected"} <= data.keys():
+        return {"status": "not_evaluated", "reason": "comparison requires actual and expected"}
+    return {"status": "evaluated", "equal": data["actual"] == data["expected"]}
+
+
+IMPLEMENTATIONS = dict.fromkeys(
+    ["plan", "review", "test", "debug", "verify", "mediate", "guard.rogue"], _compare)
+
+
 def _hive():
     hivemod.reset_hive(); agent_complex.reset_live()
     h = hivemod.get_hive()
@@ -20,7 +30,7 @@ def _scripted(script):
 
 def test_deadlock_deploys_mediator_and_versions_schema():
     h = _hive()
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     rh.schema.snapshot(cause="init")
     # inject a circular coordination wait -> beta_1 of the interaction complex = 1
     for a, b in [("planner", "coder"), ("coder", "reviewer"), ("reviewer", "planner")]:
@@ -35,7 +45,7 @@ def test_deadlock_deploys_mediator_and_versions_schema():
 
 def test_healthy_hive_takes_no_action():
     h = _hive()
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     for w in ["a", "b", "c"]:                                # a star (no cycle) = no deadlock
         h.relay("lead", w, "do the task")
         h.relay(w, "lead", "done")
@@ -44,7 +54,7 @@ def test_healthy_hive_takes_no_action():
 
 def test_reaction_is_idempotent():
     h = _hive()
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     for a, b in [("x", "y"), ("y", "z"), ("z", "x")]:
         h.relay(a, b, "waiting")
     first = rh.react()
@@ -54,7 +64,7 @@ def test_reaction_is_idempotent():
 
 def test_require_grows_the_missing_specialists():
     h = _hive()                                              # just a lead
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     acts = rh.require("review", "test")
     assert {a["need"] for a in acts} == {"review", "test"}
     assert h.get("reviewer") is not None and h.get("tester") is not None
@@ -65,13 +75,13 @@ def test_require_grows_the_missing_specialists():
 
 def test_on_consensus_deploys_verifier_on_reliability_gap():
     h = _hive()
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     # a flagged worker OR a structurally unreliable answer triggers it (structural facts)
     acts = rh.on_consensus({"flagged": ["rogue"], "responders": []})
     assert acts and acts[0]["rule"] == "reliability" and h.get("verifier") is not None
 
     h2 = _hive()
-    rh2 = ReactiveHive(h2, store=rcdb.MemoryStore())
+    rh2 = ReactiveHive(h2, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     acts2 = rh2.on_consensus({"flagged": [], "responders": [{"reliable": False}]})
     assert acts2 and h2.get("verifier") is not None
     # a clean consensus does nothing
@@ -80,7 +90,7 @@ def test_on_consensus_deploys_verifier_on_reliability_gap():
 
 def test_on_query_attaches_db_for_unbound_tables():
     h = _hive()
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
 
     class FakeDB:
         def table_names(self):
@@ -103,7 +113,7 @@ def test_run_grows_team_does_work_and_verifies(monkeypatch):
     monkeypatch.setattr(hivemod, "_chat",
                         lambda url, model, prompt, **k:
                         "the parser reads tokens and builds an ast from grammar rules")
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     out = rh.run("plan, review, and test the parser")
     assert out["answer"] and "parser" in out["answer"]
     # the team grew the exact roles the task implied, while working
@@ -123,7 +133,7 @@ def test_run_deploys_verifier_on_reliability_gap(monkeypatch):
         "m-b": "parser tokens build an ast using the grammar rules",
         "m-c": "quarterly revenue exceeded projections in every region",
     }))
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     out = rh.run("answer the parser question", needs=[])     # skip capability inference
     assert out["verification"]["flagged"]                    # the off topic worker was caught
     assert h.get("verifier") is not None                     # -> reactive layer deployed a verifier
@@ -132,7 +142,7 @@ def test_run_deploys_verifier_on_reliability_gap(monkeypatch):
 
 def test_divergent_worker_deploys_guard(monkeypatch):
     h = _hive()
-    rh = ReactiveHive(h, store=rcdb.MemoryStore())
+    rh = ReactiveHive(h, store=rcdb.MemoryStore(), implementations=IMPLEMENTATIONS)
     monkeypatch.setattr(h, "monitor", lambda **k: {
         "deadlock_cycles": 0, "interaction_hodge": {"persistent": 0.0},
         "alignment_mode": "embedding",                       # the reliable semantic signal

@@ -284,6 +284,16 @@ class ValueKind(str, Enum):
     RECURSIVE_PROGRAM = "RecursiveProgram"
     RECURSION_RESULT = "RecursionResult"
     AFFINE_FEEDBACK = "AffineFeedback"
+    C_WORKFLOW = "CWorkflow"
+    C_VALUE = "CValue"
+    C_INTERFACE = "CInterface"
+    TEMPORAL_MODEL = "TemporalModel"
+    LAYER = "Layer"
+    LAYER_INTERFACE = "LayerInterface"
+    LAYER_PRODUCT = "LayerProduct"
+    LAYER_SOLUTION = "LayerSolution"
+    LAYER_OPERATOR = "LayerOperator"
+    LAYER_READOUT = "LayerReadout"
     PROGRAM = "Program"
     PROGRAM_RESULT = "ProgramResult"
     PROGRAM_ASSEMBLY = "ProgramAssembly"
@@ -385,6 +395,7 @@ class ValueKind(str, Enum):
     COMMIT_LINK = "CommitLink"
     HISTORY = "History"
     ARTIFACT = "Artifact"
+    ONTOLOGY = "OntologyState"
     MODEL_STATE = "ModelState"
     DIGEST = "Digest"
     STORE_STATS = "StoreStats"
@@ -484,6 +495,7 @@ class RCType:
     graded_bases: tuple[BasisRef, ...] = ()
     coordinate_action: CoordinateActionDescriptor | None = None
     coordinates: CoordinateDescriptor | None = None
+    layer_profile: str | None = None
     declaration_digest: str | None = None
     tensor_axes: tuple[CoordinateDescriptor, ...] | None = None
     program_outputs: tuple[RCType, ...] | None = None

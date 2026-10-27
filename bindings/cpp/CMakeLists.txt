@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
-project(rexgraph_cpp_bindings VERSION 0.1.0 LANGUAGES CXX)
+project(rexgraph_cpp_bindings VERSION 0.2.0 LANGUAGES CXX)
+if(CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+  add_compile_options("-ffile-prefix-map=${CMAKE_CURRENT_BINARY_DIR}=."
+                      "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.")
+endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
-find_package(RFC 0.2.1 EXACT CONFIG REQUIRED)
+find_package(RFC 0.3.0 EXACT CONFIG REQUIRED)
 get_target_property(rfc_include rfc::numeric INTERFACE_INCLUDE_DIRECTORIES)
 list(GET rfc_include 0 rfc_include)
 file(GLOB_RECURSE rfc_headers CONFIGURE_DEPENDS "${rfc_include}/rfc/*.hpp")
@@ -182,7 +186,8 @@ rexgraph_binding_receipt(model_storage_digest ${model_storage_sources})
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${model_storage_sources})
 set(model_storage_output "${CMAKE_CURRENT_BINARY_DIR}/_model_storage.cpp")
 add_custom_command(OUTPUT "${model_storage_output}"
-  COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${model_storage_output}"
+  COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3
+    --working "${rexgraph_python_source_dir}/.." --output-file "${model_storage_output}"
     "${rexgraph_python_source_dir}/_model_storage.pyx"
   DEPENDS ${model_storage_sources} VERBATIM)
 Python3_add_library(_model_storage MODULE WITH_SOABI "${model_storage_output}")
@@ -535,5 +540,140 @@ target_compile_definitions(_task_outcome PRIVATE RFC_ENGINE_DIGEST="${rfc_digest
   RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_TASK_OUTCOME_BINDING_DIGEST="${task_outcome_digest}")
 install(TARGETS _task_outcome LIBRARY DESTINATION rexgraph_cpp)
 
+set(finite_search_sources include/finite_search_bridge.hpp include/finite_field_bridge.hpp
+    include/field_evidence_bridge.hpp include/field_interface_bridge.hpp include/field_program_bridge.hpp
+    ${rexgraph_python_source_dir}/_finite_search.pyx ${rexgraph_python_source_dir}/_finite_search.pxd
+    ${rexgraph_python_source_dir}/_finite_field.pxd ${rexgraph_python_source_dir}/_field_interface.pxd)
+rexgraph_binding_receipt(finite_search_digest ${finite_search_sources})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${finite_search_sources})
+set(finite_search_output "${CMAKE_CURRENT_BINARY_DIR}/_finite_search.cpp")
+add_custom_command(OUTPUT "${finite_search_output}"
+  COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${finite_search_output}"
+    "${rexgraph_python_source_dir}/_finite_search.pyx"
+  DEPENDS ${finite_search_sources} VERBATIM)
+Python3_add_library(_finite_search MODULE WITH_SOABI "${finite_search_output}")
+target_include_directories(_finite_search PRIVATE include)
+target_link_libraries(_finite_search PRIVATE rfc::inference rfc::learning)
+target_compile_features(_finite_search PRIVATE cxx_std_20)
+target_compile_definitions(_finite_search PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}" RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_FINITE_SEARCH_BINDING_DIGEST="${finite_search_digest}")
+install(TARGETS _finite_search LIBRARY DESTINATION rexgraph_cpp)
+
+set(assignment_sources include/assignment_bridge.hpp ${task_outcome_sources} ${finite_field_sources}
+    ${rexgraph_python_source_dir}/_assignment.pyx ${rexgraph_python_source_dir}/_assignment.pxd)
+rexgraph_binding_receipt(assignment_digest ${assignment_sources})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${assignment_sources})
+set(assignment_output "${CMAKE_CURRENT_BINARY_DIR}/_assignment.cpp")
+add_custom_command(OUTPUT "${assignment_output}"
+  COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${assignment_output}"
+    "${rexgraph_python_source_dir}/_assignment.pyx"
+  DEPENDS ${assignment_sources} VERBATIM)
+Python3_add_library(_assignment MODULE WITH_SOABI "${assignment_output}")
+target_include_directories(_assignment PRIVATE include)
+target_link_libraries(_assignment PRIVATE rfc::learning rfc::inference)
+target_compile_features(_assignment PRIVATE cxx_std_20)
+target_compile_definitions(_assignment PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}" RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_ASSIGNMENT_BINDING_DIGEST="${assignment_digest}")
+install(TARGETS _assignment LIBRARY DESTINATION rexgraph_cpp)
+
+option(REXGRAPH_BUILD_TEMPORAL_PROGRAM "Bind installed RexTemporal function and action programs" OFF)
+if(REXGRAPH_BUILD_TEMPORAL_PROGRAM)
+  find_package(RexTemporal 0.1.0 EXACT CONFIG REQUIRED)
+  include(cmake/CompanionReceipt.cmake)
+  rexgraph_companion_receipt(temporal_sdk_digest temporal_sdk_members temporal_sdk_include)
+  rexgraph_install_companion_terms(rexgraph_cpp)
+  if(NOT EXISTS "${temporal_sdk_include}/rex_temporal/action_programs.hpp" OR
+     NOT EXISTS "${temporal_sdk_include}/rex_temporal/layer_product.hpp")
+    message(FATAL_ERROR "The selected temporal SDK lacks action and layer-program contracts")
+  endif()
+  set(temporal_program_sources include/temporal_program_bridge.hpp
+      ${rexgraph_python_source_dir}/_temporal_program.pyx
+      ${rexgraph_python_source_dir}/_stalk_fields.pyx
+      ${rexgraph_python_source_dir}/_field_program.pyx)
+  rexgraph_binding_receipt(temporal_program_digest ${temporal_program_sources})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+      ${temporal_program_sources} ${temporal_sdk_members})
+  set(temporal_program_output "${CMAKE_CURRENT_BINARY_DIR}/_temporal_program.cpp")
+  add_custom_command(OUTPUT "${temporal_program_output}"
+    COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${temporal_program_output}"
+      "${rexgraph_python_source_dir}/_temporal_program.pyx"
+    DEPENDS ${temporal_program_sources} VERBATIM)
+  Python3_add_library(_temporal_program MODULE WITH_SOABI "${temporal_program_output}")
+  target_include_directories(_temporal_program PRIVATE include)
+  target_link_libraries(_temporal_program PRIVATE rex_temporal::runtime)
+  target_compile_features(_temporal_program PRIVATE cxx_std_20)
+  target_compile_definitions(_temporal_program PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}"
+    RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_TEMPORAL_PROGRAM_BINDING_DIGEST="${temporal_program_digest}"
+    RFC_TEMPORAL_SDK_DIGEST="${temporal_sdk_digest}")
+  install(TARGETS _temporal_program LIBRARY DESTINATION rexgraph_cpp)
+  set(action_program_sources include/action_program_bridge.hpp ${temporal_program_sources}
+      ${rexgraph_python_source_dir}/_action_program.pyx)
+  rexgraph_binding_receipt(action_program_digest ${action_program_sources})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${action_program_sources})
+  set(action_program_output "${CMAKE_CURRENT_BINARY_DIR}/_action_program.cpp")
+  add_custom_command(OUTPUT "${action_program_output}"
+    COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${action_program_output}"
+      "${rexgraph_python_source_dir}/_action_program.pyx"
+    DEPENDS ${action_program_sources} VERBATIM)
+  Python3_add_library(_action_program MODULE WITH_SOABI "${action_program_output}")
+  target_include_directories(_action_program PRIVATE include)
+  target_link_libraries(_action_program PRIVATE rex_temporal::runtime)
+  target_compile_features(_action_program PRIVATE cxx_std_20)
+  target_compile_definitions(_action_program PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}"
+    RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_ACTION_PROGRAM_BINDING_DIGEST="${action_program_digest}"
+    RFC_TEMPORAL_SDK_DIGEST="${temporal_sdk_digest}")
+  install(TARGETS _action_program LIBRARY DESTINATION rexgraph_cpp)
+endif()
+
 install(DIRECTORY "${rexgraph_python_source_dir}/" DESTINATION rexgraph_cpp
   FILES_MATCHING PATTERN "*.py" PATTERN "*.pyx" PATTERN "*.pxd" PATTERN "*.pxi")
+
+option(REXGRAPH_BUILD_C_WORKFLOW "Bind the closed C declaration workflows" ON)
+if(REXGRAPH_BUILD_C_WORKFLOW)
+  if(NOT EXISTS "${rfc_include}/rfc/inference/c_declaration_archive.hpp")
+    message(FATAL_ERROR "Declaration workflow binding requires the native declaration archive SDK")
+  endif()
+  set(c_workflow_sources include/c_workflow_bridge.hpp ${rexgraph_python_source_dir}/_c_workflow.pyx)
+  rexgraph_binding_receipt(c_workflow_digest ${c_workflow_sources})
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${c_workflow_sources})
+  set(c_workflow_output "${CMAKE_CURRENT_BINARY_DIR}/_c_workflow.cpp")
+  add_custom_command(OUTPUT "${c_workflow_output}"
+    COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${c_workflow_output}"
+      "${rexgraph_python_source_dir}/_c_workflow.pyx"
+    DEPENDS ${c_workflow_sources} VERBATIM)
+  Python3_add_library(_c_workflow MODULE WITH_SOABI "${c_workflow_output}")
+  target_include_directories(_c_workflow PRIVATE include)
+  target_link_libraries(_c_workflow PRIVATE rfc::inference)
+  target_compile_features(_c_workflow PRIVATE cxx_std_20)
+  target_compile_definitions(_c_workflow PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}"
+    RFC_C_WORKFLOW_BINDING_DIGEST="${c_workflow_digest}")
+  install(TARGETS _c_workflow LIBRARY DESTINATION rexgraph_cpp)
+endif()
+
+set(demand_sources include/demand_gluing_bridge.hpp ${rexgraph_python_source_dir}/_demand_gluing.pyx)
+rexgraph_binding_receipt(demand_digest ${demand_sources})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${demand_sources})
+set(demand_output "${CMAKE_CURRENT_BINARY_DIR}/_demand_gluing.cpp")
+add_custom_command(OUTPUT "${demand_output}"
+  COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${demand_output}" "${rexgraph_python_source_dir}/_demand_gluing.pyx"
+  DEPENDS ${demand_sources} VERBATIM)
+Python3_add_library(_demand_gluing MODULE WITH_SOABI "${demand_output}")
+target_include_directories(_demand_gluing PRIVATE include)
+target_link_libraries(_demand_gluing PRIVATE rfc::inference rfc::database rfc::runtime)
+target_compile_definitions(_demand_gluing PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}" RFC_DEMAND_BINDING_DIGEST="${demand_digest}")
+install(TARGETS _demand_gluing LIBRARY DESTINATION rexgraph_cpp)
+
+set(source_evolution_sources include/source_evolution_bridge.hpp
+    ${rexgraph_python_source_dir}/_source_evolution.pyx ${rexgraph_python_source_dir}/_source_evolution_spec.py)
+rexgraph_binding_receipt(source_evolution_digest ${source_evolution_sources})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${source_evolution_sources})
+set(source_evolution_output "${CMAKE_CURRENT_BINARY_DIR}/_source_evolution.cpp")
+add_custom_command(OUTPUT "${source_evolution_output}"
+  COMMAND "${Python3_EXECUTABLE}" -m cython --cplus -3 --output-file "${source_evolution_output}"
+    "${rexgraph_python_source_dir}/_source_evolution.pyx"
+  DEPENDS ${source_evolution_sources} VERBATIM)
+Python3_add_library(_source_evolution MODULE WITH_SOABI "${source_evolution_output}")
+target_include_directories(_source_evolution PRIVATE include)
+target_link_libraries(_source_evolution PRIVATE rfc::storage)
+target_compile_features(_source_evolution PRIVATE cxx_std_20)
+target_compile_definitions(_source_evolution PRIVATE RFC_ENGINE_DIGEST="${rfc_digest}"
+    RFC_ENGINE_VERSION="${RFC_VERSION}" RFC_SOURCE_EVOLUTION_BINDING_DIGEST="${source_evolution_digest}")
+install(TARGETS _source_evolution LIBRARY DESTINATION rexgraph_cpp)

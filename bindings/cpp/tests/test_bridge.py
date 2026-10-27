@@ -1,7 +1,9 @@
 """Installed native ownership, exact actions and execution limits."""
 import gc
+import json
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from pathlib import Path
 
 import pytest
 from rexgraph_cpp import (
@@ -234,6 +236,8 @@ def test_native_parameters_do_not_round(native_source, parameter):
 
 def test_build_receipt_identifies_engine_and_bridge():
     receipt = build_info()
-    assert receipt["engine_version"] == "0.2.1"
+    expected = json.loads((Path(__file__).resolve().parents[1] / "native-sdk.json").read_text())
+    assert receipt["engine_version"] == expected["version"]
+    assert receipt["engine_digest"] == expected["engine_digest"]
     assert len(receipt["engine_digest"]) == len(receipt["binding_digest"]) == 64
     assert receipt["scalar_policy"] == "gmp-rational-exact"

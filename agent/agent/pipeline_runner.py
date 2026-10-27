@@ -428,21 +428,26 @@ class PipelineRunner:
 
     def _chunk_documents(self, corpus):
         """Hodge chunk each document."""
-        from agent.adapters.text import TextAdapter
         from agent.chunking import hodge_chunk
 
         results = []
-        ta = TextAdapter()
         for doc in corpus.documents:
             if doc.rex is None:
                 continue
             if not doc.text or len(doc.text.strip()) < 50:
                 continue
             try:
-                ec = ta.build(doc.text, min_count=1, max_vocab=self.max_vocab)
-                chunks = hodge_chunk(
-                    doc.rex, ec.edge_spans, ec.sentence_spans, ec.source_text,
-                )
+                metadata = getattr(doc.rex, "_agent_meta", {}) or {}
+                from agent.adapters import EdgeSpan, SentenceSpan
+                edges = metadata.get("edge_spans")
+                sentences = metadata.get("sentence_spans")
+                if edges is None or sentences is None:
+                    from agent.chunking import Chunk
+                    chunks = [Chunk(0, doc.text, 0, len(doc.text), 0, 0)]
+                else:
+                    chunks = hodge_chunk(doc.rex,
+                        [EdgeSpan(**value) if isinstance(value, dict) else value for value in edges],
+                        [SentenceSpan(**value) if isinstance(value, dict) else value for value in sentences], doc.text)
                 results.append((doc.doc_id, chunks))
             except Exception as e:
                 logger.warning("Chunking failed for %s: %s", doc.doc_id, e)
@@ -450,103 +455,42 @@ class PipelineRunner:
         return results
 
     def _query_and_check(self, corpus, all_chunks, texts, query, max_rechunk):
-        """Run query, call LLM, check for hallucinations."""
+        """Query, generate and observe against the same emitted context selection."""
         from agent.hallucination import detect_hallucinations_exchange
-
-        # Spectral query across corpus
+        from agent.model_context import diagnostic_source, select_context
         qr = corpus.query(query, top_k=3, mode="hybrid")
-        query_dict = {
-            "query": qr.query_text,
-            "ranked": qr.ranked_sections,
-        }
-
-        # Build context from top ranked chunks (kappa gated + quality gated)
-        context_parts = []
-        source_rex = None
-        source_labels = []
-        source_text = ""
-
+        query_dict = {"query": qr.query_text, "ranked": qr.ranked_sections}
+        by_id = {doc.doc_id: doc for doc in corpus.documents}
+        chunk_groups = dict(all_chunks)
+        entries = []
         for ranked in (qr.ranked_sections or [])[:2]:
-            doc_id = ranked.get("doc_id", "")
-            for did, chunks in all_chunks:
-                if did == doc_id:
-                    # WAS `kappa > 0.5 or kappa > 0.2`, which is just `> 0.2`: two
-                    # magic numbers where the second silently subsumed the first.
-                    # Coherence is continuous, so the cutoff comes from the chunks'
-                    # OWN distribution: a data adaptive Tukey lower fence, the same
-                    # convention engine.py and hive.py already use for outliers. With
-                    # too few chunks to form quartiles, keep them all rather than
-                    # inventing a number.
-                    ks = np.asarray([c.kappa for c in chunks], dtype=float)
-                    if ks.size >= 4:
-                        q1, q3 = np.percentile(ks, [25.0, 75.0])
-                        fence = float(q1 - 1.5 * (q3 - q1))
-                    else:
-                        fence = float("-inf")
-                    # `>=`, not `>`: with uniform coherence the fence EQUALS every
-                    # value and a strict test drops them all. Caught by the test.
-                    for chunk in chunks:
-                        if chunk.kappa >= fence:
-                            context_parts.append(chunk.text)
-                    break
-
-            for doc in corpus.documents:
-                if doc.doc_id == doc_id and doc.rex is not None:
-                    source_rex = doc.rex
-                    source_labels = doc.vertex_labels
-                    source_text = doc.text or ""
-                    break
-
-        context = "\n\n".join(context_parts)
-
-        # Structural coverage of the query by the source
-        gate = _context_quality_gate(source_rex, source_labels, query)
-        gate_report = {
-            "context_gate": gate["verdict"],
-            "context_gate_reasons": gate["reasons"],
+            doc = by_id.get(ranked.get("doc_id"))
+            if doc is None:
+                continue
+            chunks = chunk_groups.get(doc.doc_id, ())
+            scores = np.asarray([chunk.kappa for chunk in chunks], dtype=float)
+            finite = scores[np.isfinite(scores)]
+            q1, q3 = np.percentile(finite, [25, 75]) if len(finite) >= 4 else (0, float("inf"))
+            fence = float(q1-1.5*(q3-q1))
+            entries.extend((doc, chunk) for chunk in chunks if np.isfinite(chunk.kappa) and chunk.kappa >= fence)
+        selection = select_context(entries)
+        context_rex, labels = diagnostic_source(selection)
+        gate = _context_quality_gate(context_rex, labels, query)
+        measured = gate["n_shared"] is not None
+        gate_report = {"context_gate": gate["verdict"], "context_gate_reasons": gate["reasons"],
             "context_score": gate["score"],
-            "context_sufficient": gate["verdict"] != GATE_REFUSE,
-        }
-
-        # Stop when the gate finds no supported relationship between source and query.
+            "context_evaluation": "evaluated" if measured else "not_evaluated",
+            "context_sufficient": gate["verdict"] != GATE_REFUSE if measured else None,
+            "context": selection.as_record(), "evaluation_status": "not_evaluated"}
         if gate["verdict"] == GATE_REFUSE:
-            why = "; ".join(gate["reasons"])
-            logger.warning("Context gate refused: %s", why)
-            return query_dict, (
-                "The source does not cover this query: "
-                f"{why}. Answering would not be grounded in it."
-            ), gate_report
-
-        # Call LLM
-        model_response = ""
+            return query_dict, "The selected context does not cover this query: " + "; ".join(gate["reasons"]), gate_report
         try:
-            model_response = self._call_model(query, context)
-        except Exception as e:
-            logger.warning("Model call failed: %s", e)
-            return query_dict, f"Error: {e}", gate_report
-
-        if gate["verdict"] == GATE_WARN:
-            logger.warning("Context gate weak: %s", "; ".join(gate["reasons"]))
-            model_response = (
-                "[thin context: " + "; ".join(gate["reasons"]) + "]\n\n"
-                + model_response
-            )
-
-        # Hallucination check via exchange complex
-        hall_report = dict(gate_report)
-        if source_text and model_response:
-            report = detect_hallucinations_exchange(
-                source_text, model_response,
-            )
-            hall_report.update({
-                "overall_score": report.overall_score,
-                "kappa_correlation": report.kappa_correlation,
-                "n_shared": report.n_shared_entities,
-                "n_flags": report.n_flags,
-                "summary": report.summary(),
-            })
-
-        return query_dict, model_response, hall_report
+            response = self._call_model(query, selection.text)
+        except Exception as exc:
+            gate_report["model_error"] = f"{type(exc).__name__}: {exc}"
+            return query_dict, f"Error: {exc}", gate_report
+        report = detect_hallucinations_exchange(selection.text, response)
+        return query_dict, response, {**gate_report, **report.as_record()}
 
     def _call_model(self, query, context):
         """Send query + context to the model."""
@@ -565,7 +509,7 @@ class PipelineRunner:
         if context:
             messages.append({
                 "role": "system",
-                "content": f"Document context:\n{context[:12000]}",
+                "content": f"Document context:\n{context}",
             })
         messages.append({"role": "user", "content": query})
 

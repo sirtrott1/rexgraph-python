@@ -301,6 +301,18 @@ register(OperatorSignature(
 # RCDB readings
 
 register(OperatorSignature(
+    name="RCDB_SELECT", source_kind=ValueKind.RCDB_STORE,
+    inputs=(TypePattern("filters", optional=True), _LIMIT, _OFFSET,
+            TypePattern("as_of", optional=True), TypePattern("valid_at", optional=True),
+            TypePattern("include_history", literal=bool, optional=True)),
+    source_methods=frozenset({"list", "query"}),
+    result=_t("RecordSet", ValueKind.RECORD_SET, domain=Domain.METADATA,
+              exactness=Exactness.STRUCTURAL),
+    implementation_key="rcdb.structural-select", requires=frozenset({"records", SEARCH}),
+    memoizable=False,
+))
+
+register(OperatorSignature(
     name="RCDB_LIST", source_kind=ValueKind.RCDB_STORE, inputs=(_LIMIT, _OFFSET),
     source_methods=frozenset({"list"}),
     result=_t("RecordSet", ValueKind.RECORD_SET, domain=Domain.METADATA,
@@ -1671,3 +1683,21 @@ def _install_task_signatures(register):
 
 
 _install_task_signatures(register)
+
+from .assignment import install_signatures as _install_assignment_signatures
+_install_assignment_signatures(register)
+
+from .relational_runtime import install_signatures as _install_relational_runtime_signatures
+_install_relational_runtime_signatures(register)
+
+from .layer_contracts import install as _install_layer_signatures
+_install_layer_signatures(register, OperatorSignature, TypePattern)
+
+from .c_workflow_contracts import install as _install_c_workflow_signatures
+_install_c_workflow_signatures(register, OperatorSignature, TypePattern)
+
+from .demand_gluing_contracts import install as _install_demand_gluing_signatures
+_install_demand_gluing_signatures(register,OperatorSignature,TypePattern)
+
+from .ontology_contracts import install as _install_ontology_signatures
+_install_ontology_signatures(register, OperatorSignature, TypePattern)

@@ -358,7 +358,7 @@ def compute_face_metrics_i32(B2,
                              np.ndarray[f64, ndim=1] rho):
     """Face structure metrics in six phases. O(nnz(B_2) + nE).
 
-    Phase 5 uses Welford's single pass algorithm for face
+    Face concentration uses Welford's single pass algorithm for face
     concentration (CV), avoiding the two pass mean then variance
     approach that iterates B_2 twice per face.
 
@@ -410,7 +410,7 @@ def compute_face_metrics_i32(B2,
     cdef double mean, var, delta
     cdef i32 nv_count
 
-    # Phase 1: face sizes and face vertex counts
+    # face sizes and face vertex counts
     for f in range(nF):
         face_sz[f] = cp[f + 1] - cp[f]
         fi = f
@@ -425,7 +425,7 @@ def compute_face_metrics_i32(B2,
                 ls[t] = fi
                 face_nv[f] += 1
 
-    # Phase 2: per edge contribution metrics
+    # per edge contribution metrics
     for e in range(nE):
         efc = rp[e + 1] - rp[e]
         if efc == 0:
@@ -440,7 +440,7 @@ def compute_face_metrics_i32(B2,
         eac[e] = sum_inv_sz / <double>efc
         eas[e] = sum_sz / <double>efc
 
-    # Phase 3: boundary asymmetry per edge
+    # boundary asymmetry per edge
     for e in range(nE):
         s = es[e]; t = et[e]
         diff = <double>(vfcv[s] - vfcv[t])
@@ -452,7 +452,7 @@ def compute_face_metrics_i32(B2,
         if mx > 0.0:
             ea[e] = diff / mx
 
-    # Phase 4: per vertex contribution metrics
+    # per vertex contribution metrics
     cdef Py_ssize_t gen_offset = nF
     for f in range(nF):
         fi = f + gen_offset
@@ -474,7 +474,7 @@ def compute_face_metrics_i32(B2,
             vac[s] = vtc[s] / <double>vfcv[s]
             vas[s] = vas[s] / <double>vfcv[s]
 
-    # Phase 5: face concentration via Welford single pass
+    # face concentration via Welford single pass
     # Old code iterated B_2 twice per face (mean pass, variance pass).
     # Welford computes both in one pass with one generation counter.
     cdef Py_ssize_t gen_offset2 = 2 * nF
@@ -510,7 +510,7 @@ def compute_face_metrics_i32(B2,
         else:
             fc[f] = 0.0
 
-    # Phase 6: Pearson correlation between bnd_asym and rho
+    # Pearson correlation between bnd_asym and rho
     cdef double corr = _pearson_corr(ea, rhov, nE)
 
     cdef double v_tc_sum = 0.0, e_tc_sum = 0.0
@@ -583,7 +583,7 @@ def compute_face_metrics_i64(B2,
     cdef double mean, var, delta
     cdef i32 nv_count
 
-    # Phase 1
+
     for f in range(nF):
         face_sz[f] = <i32>(cp[f + 1] - cp[f])
         fi = f
@@ -598,7 +598,7 @@ def compute_face_metrics_i64(B2,
                 ls[t] = fi
                 face_nv[f] += 1
 
-    # Phase 2
+
     for e in range(nE):
         efc = <Py_ssize_t>(rp[e + 1] - rp[e])
         if efc == 0:
@@ -613,7 +613,7 @@ def compute_face_metrics_i64(B2,
         eac[e] = sum_inv_sz / <double>efc
         eas[e] = sum_sz / <double>efc
 
-    # Phase 3
+
     for e in range(nE):
         s = <Py_ssize_t>es[e]; t = <Py_ssize_t>et[e]
         diff = <double>(vfcv[s] - vfcv[t])
@@ -625,7 +625,7 @@ def compute_face_metrics_i64(B2,
         if mx > 0.0:
             ea[e] = diff / mx
 
-    # Phase 4
+
     cdef Py_ssize_t gen_offset = nF
     for f in range(nF):
         fi = f + gen_offset
@@ -647,7 +647,7 @@ def compute_face_metrics_i64(B2,
             vac[s] = vtc[s] / <double>vfcv[s]
             vas[s] = vas[s] / <double>vfcv[s]
 
-    # Phase 5: Welford single pass
+    # Welford single pass
     cdef Py_ssize_t gen_offset2 = 2 * nF
     for f in range(nF):
         if face_nv[f] < 2:
@@ -681,7 +681,7 @@ def compute_face_metrics_i64(B2,
         else:
             fc[f] = 0.0
 
-    # Phase 6
+
     cdef double corr = _pearson_corr(ea, rhov, nE)
 
     cdef double v_tc_sum = 0.0, e_tc_sum = 0.0
@@ -853,7 +853,7 @@ def typed_face_selection(np.ndarray[i32, ndim=1] edge_types,
     cdef Py_ssize_t p_u, p_w
     cdef Py_ssize_t nF_r = 0, nF_v = 0
 
-    # Phase 1: enumerate all triangles, partition into realized vs void.
+    # enumerate all triangles, partition into realized vs void.
     # For each u, iterate neighbors v > u; for each such v, intersect
     # N(u) ∩ N(v) for w > v (merge of two sorted rows). Each triangle is
     # found exactly once. Pass 1 counts; pass 2 fills preallocated arrays
@@ -1078,7 +1078,7 @@ def context_face_selection(np.ndarray[f64, ndim=2] B1,
 
     cdef Py_ssize_t n_tri = len(all_tri_edges)
 
-    # Phase 2: for each triangle, check global coverage (any context
+    # for each triangle, check global coverage (any context
     # covers all 3 edges). Also build per context face counts.
     cdef np.ndarray[i32, ndim=1] per_ctx = np.zeros(n_ctx, dtype=np.int32)
     cdef i32[::1] pcv = per_ctx

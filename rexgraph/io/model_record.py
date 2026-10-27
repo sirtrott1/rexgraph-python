@@ -38,7 +38,7 @@ def model_record(source, state):
     return record
 
 
-def read_model_record(record, index=0, *, _source_cache=None, algebraic_limits=None, _algebraic_cache=None, execution_context=None):
+def read_model_record(record, index=0, *, _source_cache=None, algebraic_limits=None, _algebraic_cache=None, execution_context=None, _prepare=True):
     state = record.get_metadata(1, index, "model")
     source = record.get_metadata(1, index, "model_source")
     if not isinstance(state, ModelState) or source is None:
@@ -67,17 +67,21 @@ def read_model_record(record, index=0, *, _source_cache=None, algebraic_limits=N
     elif isinstance(state.source, CppSourceReference):
         from rexgraph.cpp_model import restore_cpp_source
         from rexgraph.model_contract import invoke_model_provider, resolve_model_provider
-        maximum = state.configuration["max_bytes"] if state.adapter in {"cpp_conditioned_occurrence_program", "cpp_conditioned_field_family", "cpp_conditioned_field_program", "cpp_stalk_pattern_bank", "cpp_relational_field_program", "cpp_relational_finite_field", "cpp_relational_literal_finite_field", "cpp_relational_finite_operator", "cpp_relational_known_product"} else 256*1024*1024
+        maximum = state.configuration["max_bytes"] if state.adapter in {"cpp_conditioned_occurrence_program", "cpp_conditioned_field_family", "cpp_conditioned_field_program", "cpp_stalk_pattern_bank", "cpp_relational_field_program", "cpp_relational_finite_field", "cpp_relational_literal_finite_field", "cpp_relational_finite_operator", "cpp_relational_known_product", "cpp_finite_search", "cpp_assignment_evidence"} else 256*1024*1024
         read_limits = {}
         if state.adapter == "cpp_stalk_pattern_bank":
             from rexgraph.cpp_stalk_pattern_model import _admission, _archive_read_limits
             limits = _admission(state.configuration["limits"], maximum)
             read_limits = _archive_read_limits(limits)
-        if state.adapter in {"cpp_conditioned_occurrence_program", "cpp_conditioned_field_family", "cpp_conditioned_field_program", "cpp_relational_field_program", "cpp_relational_finite_field", "cpp_relational_literal_finite_field", "cpp_relational_finite_operator", "cpp_relational_known_product"}:
+        if state.adapter in {"cpp_conditioned_occurrence_program", "cpp_conditioned_field_family", "cpp_conditioned_field_program", "cpp_relational_field_program", "cpp_relational_finite_field", "cpp_relational_literal_finite_field", "cpp_relational_finite_operator", "cpp_relational_known_product", "cpp_finite_search", "cpp_assignment_evidence"}:
             limits = state.configuration["limits"]
             read_limits = {"max_dimension": max(limits[:2]), "max_records": limits[1],
                            "max_logical_size": max(limits[:2])}
         source = restore_cpp_source(source, state.source, max_bytes=maximum, _source_cache=_source_cache, **read_limits)
+        if not _prepare:
+            # Structural source binding precedes operation-specific authority.
+            state.bind(source)
+            return state, source
         if state.adapter == "cpp_binary_gate":
             from rexgraph.cpp_binary_gate import enable_cpp_binary_gate_provider
             enable_cpp_binary_gate_provider()
@@ -107,6 +111,12 @@ def read_model_record(record, index=0, *, _source_cache=None, algebraic_limits=N
         if state.adapter == "cpp_relational_finite_field":
             from rexgraph.cpp_relational_finite_field import enable_finite_field_provider
             enable_finite_field_provider()
+        if state.adapter == "cpp_finite_search":
+            from rexgraph.cpp_finite_search import enable_finite_search_provider
+            enable_finite_search_provider()
+        if state.adapter == "cpp_assignment_evidence":
+            from rexgraph.cpp_assignment import enable_assignment_provider
+            enable_assignment_provider()
         if state.adapter == "cpp_relational_finite_operator":
             from rexgraph.cpp_relational_finite_operator import enable_finite_operator_provider
             enable_finite_operator_provider()
@@ -171,7 +181,8 @@ def read_model_record(record, index=0, *, _source_cache=None, algebraic_limits=N
         provider = resolve_model_provider(state, "prepare")
         if provider is None:
             raise ValueError("native model record requires an execution provider")
-        invoke_model_provider(provider, "prepare", state, source, execution_context=execution_context)
+        invoke_model_provider(provider, "prepare", state, source,
+                              execution_context=execution_context if "prepare" in provider.context_operations else None)
     state.bind(source)
     return state, source
 

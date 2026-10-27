@@ -95,10 +95,11 @@ class RelationalSession:
 
     def __init__(self, store=None, *, context=None):
         from agent.rcdb import default_store
+        from agent.record_access import require_store
         from agent.server.scope import ScopedStore
         from rcql import register_result_storage_codec
         register_result_storage_codec()
-        store = default_store() if store is None else store
+        store = require_store(default_store() if store is None else store)
         if context is not None and context.auth_enabled:
             if isinstance(store, ScopedStore):
                 if (store._workspace, store._caller) != (context.workspace, context.identity):
@@ -180,6 +181,28 @@ class RelationalSession:
                       for value in bound.values() if value.ref is not None
                       and value.ref.state_digest is not None and value.ref.record_id is not None
                       and value.ref.record_version is not None}
+        from rexgraph.source_binding import CppSourceReference, CppAlgebraicSourceReference
+        native_types = (CppSourceReference, CppAlgebraicSourceReference)
+        needed = {(ref.state_digest, ref.record_id, ref.version)
+                  for ref in field_references(parameters) if isinstance(ref, native_types)}
+        if needed:
+            from rexgraph import RexGraph
+            from rexgraph.model_state import ModelState
+            from rcql.model_operators import source_for
+            from rexgraph.io.model_record import read_model_record
+            for selected in bound.values():
+                graph = selected.value
+                if not isinstance(graph, RexGraph) or not graph.nE:
+                    continue
+                state = graph.get_metadata(1, 0, "model")
+                if not isinstance(state, ModelState) or not isinstance(state.source, native_types):
+                    continue
+                key = (state.source.state_digest, state.source.record_id, state.source.version)
+                if key in needed:
+                    native = (read_model_record(graph, _prepare=False)[1]
+                              if isinstance(state.source, CppSourceReference) else source_for(graph, state))
+                    state.source.bind(native).check()
+                    references[key] = native
         return bind_sources(parameters, references, strict=True)
 
     def _record_value(self, selector):
@@ -223,12 +246,12 @@ class RelationalSession:
             self.save_result(save_as, result, expected_version=expected_version)
         return result
 
-    def save_result(self, record_id, result, *, expected_version=0, meta=None):
+    def save_result(self, record_id, result, *, expected_version=0, meta=None, tags=None):
         from rcdb import QUERY_RESULT_CODEC
         from rcql import register_result_storage_codec
         register_result_storage_codec()
         return self.store.put_record(record_id, result, codec=QUERY_RESULT_CODEC,
-            expected_version=_integer(expected_version, "expected_version"), meta=meta)
+            expected_version=_integer(expected_version, "expected_version"), meta=meta, tags=tags)
 
     def publish_program(self, record_id, program, *, expected_version, meta=None):
         from rcql import Program
@@ -259,6 +282,56 @@ class RelationalSession:
         """Retain explicit owning snapshots for repeated finite program execution."""
         from .prepared import PreparedRelationalProgram
         return PreparedRelationalProgram(self, record_id, version=version, sources=sources)
+
+    def run_program_bundle(self, record_id, *, version, bundle, source_outputs,
+                           parameter_outputs, parameters=None, save_as=None, expected_version=0):
+        """Execute with actual sources and fields selected from one owning Result.
+
+        Output indices are explicit ports within the pinned bundle. Its record
+        identity is retained separately from the native sources it contains.
+        Historical execution does not grant current publication authority.
+        """
+        from rcql import BoundSource, Program, Result
+        from .record_access import PinnedRecords, copy_record_pin
+        _integer(version, "version", 1)
+        bundle = copy_record_pin(bundle)
+        value = PinnedRecords(self).read(bundle)
+        if not isinstance(value, Result):
+            raise TypeError("program bundle requires a canonical Result record")
+
+        def selected(mapping, reserved=()):
+            if not isinstance(mapping, dict):
+                raise TypeError("bundle ports require name to output-index mappings")
+            result = {}
+            for name, index in mapping.items():
+                if not isinstance(name, str) or not name or name in reserved:
+                    raise ValueError("invalid or reserved program bundle port")
+                _integer(index, "bundle output")
+                if index >= len(value.values):
+                    raise ValueError("bundle output is outside the complete Result")
+                result[name] = index
+            return result
+
+        sources = selected(source_outputs, ("db",))
+        inputs = selected(parameter_outputs)
+        supplied = dict(parameters or {})
+        if supplied.keys() & inputs.keys():
+            raise ValueError("caller parameters overlap bundle-owned inputs")
+        supplied.update((name, value.values[index]) for name, index in inputs.items())
+        snapshot = self.read(record_id, version)
+        program = Program.from_record(snapshot.value)
+        runtime, bound = self._runtime()
+        for name, index in sources.items():
+            runtime.register(name, BoundSource(value.values[index], bound["db"].policy))
+        output = runtime.execute_program(program, params=supplied, exactness="exact")
+        result = self._program_result(snapshot, program, output, {})
+        result = replace(result, native_plan={**result.native_plan,
+            "agent_bundle": {"profile": "agent.program-bundle.v1", "record": bundle,
+                "source_outputs": sources, "parameter_outputs": inputs},
+            "bundle_values": value.values})
+        if save_as is not None:
+            self.save_result(save_as, result, expected_version=expected_version)
+        return result
 
     @staticmethod
     def _program_result(snapshot, program, output, references):
@@ -315,6 +388,25 @@ def _response(result, *, include_payload=True):
 
 def records(limit=100, offset=0, _ctx=None):
     return {"records": [r.to_wire_dict() for r in _session(_ctx).records(limit=limit, offset=offset)]}
+
+
+def import_file(record_id, expected_version, files, format, _ctx=None):
+    """Publish one resolved file through the installed Core format and record codecs."""
+    from agent.native_files import load_native_file as load
+    from agent.server.budget import check_size
+    if not isinstance(files, (list, tuple)) or len(files) != 1:
+        raise ValueError("file publication requires exactly one resolved input")
+    if not isinstance(format, str) or not format:
+        raise TypeError("file publication requires an explicit installed format")
+    _integer(expected_version, "expected_version")
+    value = load(files[0], format=format)
+    from rexgraph import RexGraph
+    if isinstance(value, RexGraph):
+        check_size({"grade0": value.nV, "grade1": value.nE,
+                    "participations": len(value.boundary_idx)})
+    record = _session(_ctx).publish(record_id, value, expected_version=expected_version,
+                                   meta={"agent_file_format": format})
+    return {"record": record.to_wire_dict()}
 
 
 def inspect(record_id, version=None, history=False, _ctx=None):

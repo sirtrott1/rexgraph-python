@@ -10,6 +10,36 @@ from .capabilities import BoundSource
 from .source_context import field_references
 
 
+def _c_owner_packets(value, seen=None):
+    """Find closed C owners without materializing their native fields."""
+    from .c_workflow import CWorkflow, CValue, CInterface
+    seen = set() if seen is None else seen
+    if id(value) in seen:
+        return set()
+    seen.add(id(value))
+    if type(value) is CWorkflow:
+        return {value.data}
+    if type(value) is CValue:
+        return {value.workflow.data}
+    if type(value) is CInterface:
+        return {value.declaration['workflow']}
+    owner = getattr(value, '_c_owner', None)
+    if type(owner) is CWorkflow:
+        return {owner.data}
+    if isinstance(value, Mapping):
+        children = value.values()
+    elif isinstance(value, (tuple, list)):
+        children = value
+    elif is_dataclass(value) and type(value).__module__.startswith('rcql.'):
+        children = (getattr(value, field.name) for field in fields(value) if not field.name.startswith('_'))
+    else:
+        return set()
+    result = set()
+    for child in children:
+        result.update(_c_owner_packets(child, seen))
+    return result
+
+
 def _fingerprint(value, *, seen=None, depth=0):
     if depth > 64:
         raise ValueError("cache parameters are nested too deeply or cyclic")
@@ -34,6 +64,15 @@ def _fingerprint(value, *, seen=None, depth=0):
     from rexgraph.affine_feedback import AffineFeedback
     from rexgraph.selection import Selection, Lineage
     from rexgraph.partition_state import RexPartition
+    from .declaration_codec import declaration_types
+    from .c_workflow import CValue,CWorkflow
+    if type(value) in (CValue,CWorkflow):
+        workflow=value.workflow if type(value) is CValue else value
+        return (type(value).__name__,value.coefficient_digest,workflow._receiving,workflow._arithmetic,
+                tuple(sorted(ref.coefficient_digest for ref in field_references(value))))
+    if type(value) in declaration_types().values():
+        return (type(value).__module__, type(value).__name__, value.coefficient_digest,
+                tuple(sorted(ref.coefficient_digest for ref in field_references(value))))
     if isinstance(value, (Selection, Lineage)):
         return (type(value).__name__, value.digest)
     if isinstance(value, RexPartition):
@@ -252,8 +291,13 @@ class QueryCache:
             return digest(account)
         key = identity()
         record_id = self.namespace+"/"+key
+        input_owners = _c_owner_packets(executor.params)
         with self._lock:
             result = self._read_result(record_id, key, references, cpp_declarations)
+            # A separate packet cannot retain a pointer to a caller's C owner.
+            # Matching declarations only refuse reuse; they never merge owners.
+            if result is not None and input_owners.intersection(_c_owner_packets(result.values)):
+                result = None
             if result is not None:
                 if executor.exactness_policy == "exact":
                     from .evaluation_policy import require_exact
@@ -275,6 +319,11 @@ class QueryCache:
             for result_ref in field_references(result.values):
                 if not _declared_reference(result_ref, references, cpp_declarations):
                     raise ValueError("cache output contains a source not declared by its inputs")
+            if input_owners.intersection(_c_owner_packets(result.values)):
+                result = replace(result, native_plan=dict(result.native_plan or {},
+                    cache={"key": key, "hit": False, "reason": "retained-native-input-owner"}))
+                self._retain_result(key, result)
+                return result
             record = _result_record(result, key, all_refs)
             self.store.commit_mutation(record_id, record, expected_version=0)
             result = replace(result, native_plan=dict(result.native_plan or {}, cache={"key": key, "hit": False}))

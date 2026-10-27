@@ -1152,7 +1152,8 @@ class CorpusBuilder:
         """
         from agent import rcdb
         self._ensure_built()
-        store = store or rcdb.default_store()
+        from agent.record_access import require_store
+        store = require_store(rcdb.default_store() if store is None else store)
         written = []
         for doc in self.documents:
             if doc.rex is None:
@@ -1185,7 +1186,8 @@ class CorpusBuilder:
         reconstructed as it stood at a transaction or validity time.
         """
         from agent import rcdb
-        store = store or rcdb.default_store()
+        from agent.record_access import require_store
+        store = require_store(rcdb.default_store() if store is None else store)
         corpus = cls(**kwargs)
         if ids is None:
             ids = [r.id for r in store.list(limit=limit)

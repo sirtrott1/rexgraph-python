@@ -304,7 +304,7 @@ def edge_weight_conjugation(np.ndarray[f64, ndim=2] L,
     return Lw
 
 
-# Phase 3: Dynamic RCFE strain
+# Dynamic RCFE strain
 
 def attributed_curvature(np.ndarray[f64, ndim=2] B1,
                           np.ndarray[f64, ndim=2] B2,

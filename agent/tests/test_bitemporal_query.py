@@ -31,7 +31,7 @@ def _put(store, doc_id, text):
     c.persist(store)
 
 
-@pytest.fixture(params=["memory", "file", "sql"])
+@pytest.fixture(params=['memory', 'file', 'local'])
 def revised(request, tmp_path):
     """One id whose vocabulary is entirely replaced, plus the instant between."""
     if request.param == "memory":
@@ -39,7 +39,7 @@ def revised(request, tmp_path):
     elif request.param == "file":
         st = rcdb.FileStore(str(tmp_path / "store"), read_only=False)
     else:
-        st = rcdb.SQLStore(f"sqlite:///{tmp_path / 'rc.sqlite'}")
+        st = rcdb.LocalStore(str(f"local://{tmp_path / 'rc.sqlite'}").removeprefix("local://"))
     _put(st, "doc", OLD)
     time.sleep(0.02)
     t_mid = time.time()
@@ -110,7 +110,7 @@ def test_retrieval_as_of_still_answers_for_the_current_vocabulary(revised):
 def test_valid_at_is_honoured_by_the_collection_accessors(tmp_path):
     """tx time is when we recorded it; valid time is when it was true. They are
     different questions and both have to reach list/query."""
-    st = rcdb.SQLStore(f"sqlite:///{tmp_path / 'rc.sqlite'}")
+    st = rcdb.LocalStore(str(f"local://{tmp_path / 'rc.sqlite'}").removeprefix("local://"))
     try:
         c = CorpusBuilder()
         c.add_text(OLD, doc_id="doc")

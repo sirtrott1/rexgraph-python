@@ -20,6 +20,15 @@ def field_references(value, seen=None):
     if isinstance(value, FieldSource):
         value.check()
         return (value,)
+    from rexgraph.ontology import OntologyState, ontology_dependencies
+    if isinstance(value, OntologyState):
+        return value.dependencies
+    from .c_workflow import CWorkflow,CValue,CInterface
+    if type(value) in (CWorkflow,CValue,CInterface):
+        return value.dependencies
+    from .declaration_codec import declaration_types
+    if type(value) in declaration_types().values():
+        return tuple(getattr(value, "dependencies", ()))
     if isinstance(value, BoundSource):
         ref = value.ref
         own = () if ref is None or ref.state_digest is None else (
@@ -30,6 +39,9 @@ def field_references(value, seen=None):
                                                                  value.record_version, value.state_digest),)
         return (*own, *field_references(value.contributors, seen))
     if isinstance(value, Mapping):
+        profile = value.get("profile")
+        if type(profile) is str and profile == "rexgraph.ontology.v1":
+            return ontology_dependencies(value)
         return tuple(ref for item in value.values() for ref in field_references(item, seen))
     if isinstance(value, (tuple, list)):
         return tuple(ref for item in value for ref in field_references(item, seen))

@@ -32,6 +32,8 @@ class RCQLRuntime:
         self._sources = {}
 
     def register(self, name: str, value, *, policy=None) -> None:
+        from .record_access import require_store
+        require_store(value.value if isinstance(value, BoundSource) else value)
         name = str(name).strip()
         if not name:
             raise ValueError("source name cannot be empty")

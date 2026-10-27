@@ -43,13 +43,24 @@ def test_rcdb_does_not_import_the_agent(path):
 @pytest.mark.parametrize("name", ["rcdb", "rcdb_index", "rexstore", "objectstore",
                                   "rcdb_protected_index"])
 def test_the_agent_modules_are_compatibility_surfaces(name):
-    """Each is a re export, so the thirty odd modules importing agent.rcdb still work."""
+    """Agent delegates storage and adds provider admission without another backend."""
     path = REPO / "agent" / "agent" / f"{name}.py"
     if not path.is_dir() and not path.exists():
         pytest.skip(f"{name} is not present in this checkout")
     text = path.read_text()
     assert "from rcdb import" in text, f"{name} does not re-export the package"
-    assert len(text.splitlines()) < 30, f"{name} carries an implementation, not a surface"
+    tree = ast.parse(text)
+    assert not any(isinstance(node, ast.ClassDef) for node in ast.walk(tree))
+    functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    admitted = {"register_backend", "open_store", "default_store", "SQLStore"} if name == "rcdb" else set()
+    assert set(functions) <= admitted, f"{name} defines storage operations outside its admission surface"
+    for method in ("register_backend", "open_store", "default_store"):
+        if method in functions:
+            assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                       and isinstance(node.func.value, ast.Name) and node.func.value.id == "_rcdb_package"
+                       and node.func.attr == method for node in ast.walk(functions[method])), method
+    if "SQLStore" in functions:
+        assert any(isinstance(node, ast.Raise) for node in ast.walk(functions["SQLStore"]))
 
 
 def test_a_store_works_with_no_hooks_configured():

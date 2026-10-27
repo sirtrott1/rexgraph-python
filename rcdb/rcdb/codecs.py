@@ -14,6 +14,7 @@ from .header import CodecRef
 VALUE_CODEC = CodecRef("rexgraph.value", 1)
 PROVENANCE_CODEC = CodecRef("rexgraph.provenance", 1)
 DECLARATION_CODEC = CodecRef("rexgraph.dataset-declaration", 1)
+ONTOLOGY_CODEC = CodecRef("rexgraph.ontology", 1)
 COPY_RECEIPT_CODEC = CodecRef("rcdb.copy-receipt", 1)
 MIGRATION_PLAN_CODEC = CodecRef("rcdb.migration-plan", 1)
 MIGRATION_PROGRESS_CODEC = CodecRef("rcdb.migration-progress", 1)
@@ -123,6 +124,7 @@ def _install_builtins():
         if _INSTALLED:
             return
         from rexgraph.io.declaration import DatasetDeclaration
+        from rexgraph.ontology import OntologyState
         from .transfer import CopyReceipt
         from .migration import MigrationPlan, MigrationProgress, MigrationStepReceipt
         codecs = [RecordCodec(VALUE_CODEC, "NativeValue", pack_value, unpack_value, admission=_no_cells),
@@ -133,6 +135,10 @@ def _install_builtins():
             codecs.append(RecordCodec(reference, cls.__name__, lambda v, cls=cls: _typed_encode(cls, v), cls.from_bytes, admission=_no_cells))
         for codec in codecs:
             _CODECS.register(_key(codec.reference), codec)
+        ontology = RecordCodec(ONTOLOGY_CODEC, "OntologyState",
+            lambda v: _typed_encode(OntologyState, v), OntologyState.from_bytes,
+            max_bytes=256*1024*1024)
+        _CODECS.register(_key(ontology.reference), ontology)
         _INSTALLED = True
 
 

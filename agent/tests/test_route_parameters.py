@@ -40,7 +40,7 @@ def test_ml_run_refuses_a_path_into_the_config_directory(client, tmp_path):
 
 
 @pytest.mark.parametrize("body", [
-    {"connection": "sqlite:////etc/passwd"},
+    {"connection": "local:///etc/passwd"},
     {"mongo_connection": "mongodb://127.0.0.1:27017"},
 ])
 def test_schema_reflection_answers_to_the_db_allow_list(client, monkeypatch, body):

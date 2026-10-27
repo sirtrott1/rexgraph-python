@@ -4,7 +4,7 @@ from fractions import Fraction
 
 import pytest
 
-from rcdb import LocalStore, MemoryStore, NativeObjectStore, SQLStore
+from rcdb import LocalStore, MemoryStore, NativeObjectStore
 from agent.server.scope import ScopedStore
 
 
@@ -15,11 +15,10 @@ def opened(kind, root):
         pytest.importorskip("fsspec")
         scheme = "memory" if kind == "object-memory" else "file"
         return NativeObjectStore(f"{scheme}://{root}")
-    pytest.importorskip("sqlalchemy")
-    return SQLStore(f"sqlite:///{root}.sqlite")
+    raise ValueError("unknown native provider: " + kind)
 
 
-@pytest.mark.parametrize("kind", ["memory", "local", "sql", "object-file", "object-memory"])
+@pytest.mark.parametrize("kind", ['memory', 'local', 'object-file', 'object-memory'])
 def test_replay_maintenance_requires_an_unscoped_operator(kind, tmp_path):
     with closing(opened(kind, tmp_path / "store")) as inner:
         with pytest.raises(PermissionError, match="unscoped"):
@@ -31,7 +30,7 @@ def test_replay_maintenance_requires_an_unscoped_operator(kind, tmp_path):
         assert inner.change_cursor.sequence == 0
 
 
-@pytest.mark.parametrize("kind", ["memory", "local", "sql", "object-file", "object-memory"])
+@pytest.mark.parametrize("kind", ['memory', 'local', 'object-file', 'object-memory'])
 def test_typed_workspace_writes_stamp_ownership_audit_and_refuse_other_owner(kind, tmp_path, monkeypatch):
     with closing(opened(kind, tmp_path / "store")) as inner:
         actions = []
@@ -55,7 +54,7 @@ def test_typed_workspace_writes_stamp_ownership_audit_and_refuse_other_owner(kin
         assert actions[0][1]["detail"]["record_type"] == "NativeValue"
 
 
-@pytest.mark.parametrize("kind", ["memory", "local", "sql", "object-file", "object-memory"])
+@pytest.mark.parametrize("kind", ['memory', 'local', 'object-file', 'object-memory'])
 def test_metadata_projection_cannot_silently_discard_workspace_ownership(kind, tmp_path, monkeypatch):
     with closing(opened(kind, tmp_path / "store")) as inner:
         from agent.server import audit
@@ -69,7 +68,7 @@ def test_metadata_projection_cannot_silently_discard_workspace_ownership(kind, t
         assert scoped.put_record("private", Fraction(1, 7)).meta == {"workspace": "alpha"}
 
 
-@pytest.mark.parametrize("kind", ["local", "sql", "object-file", "object-memory"])
+@pytest.mark.parametrize("kind", ['local', 'object-file', 'object-memory'])
 def test_an_independent_native_handle_cannot_reassign_an_owned_record(kind, tmp_path, monkeypatch):
     root = tmp_path / "shared"
     with closing(opened(kind, root)) as first, closing(opened(kind, root)) as second:
@@ -81,7 +80,7 @@ def test_an_independent_native_handle_cannot_reassign_an_owned_record(kind, tmp_
         assert first.read_record("owned").value == Fraction(1, 7)
 
 
-@pytest.mark.parametrize("kind", ["memory", "local", "sql", "object-file", "object-memory"])
+@pytest.mark.parametrize("kind", ['memory', 'local', 'object-file', 'object-memory'])
 def test_exact_version_scope_filters_before_decode_without_cloning_history(kind, tmp_path, monkeypatch):
     from rcdb import copy_record, record_packet
     from rcql import Executor, parse

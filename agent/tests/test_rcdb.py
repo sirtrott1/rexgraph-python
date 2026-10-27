@@ -8,7 +8,7 @@ from agent.adapters.text import TextAdapter
 from agent.auto import build_rex_from_edges
 from agent.rcdb import (
     MemoryStore,
-    SQLStore,
+    LocalStore,
     open_store,
     register_backend,
     structural_signature,
@@ -27,7 +27,7 @@ DENSE = _rex("cells signal receptors genes express proteins pathways regulate "
 SPARSE = _rex("alpha beta gamma")
 
 
-@pytest.fixture(params=["memory", "file", "sql"])
+@pytest.fixture(params=['memory', 'file', 'local'])
 def backend_store(request, tmp_path):
     """An opened store per backend, closed when the test ends.
 
@@ -42,7 +42,7 @@ def backend_store(request, tmp_path):
     elif kind == "file":
         uri = f"file://{tmp_path / 'store'}"
     else:
-        uri = f"sqlite:///{tmp_path / 'store.db'}"
+        uri = f"local://{tmp_path / 'store.db'}"
     store = open_store(uri, **({"read_only": False} if kind == "file" else {}))
     yield store
     store.close()
@@ -84,8 +84,8 @@ class TestBackends:
     def test_open_store_scheme_dispatch(self, tmp_path):
         assert open_store("memory://").backend == "memory"
         assert open_store(f"file://{tmp_path / 'x_rcdb'}", read_only=False).backend == "file"
-        with closing(open_store("sqlite:///" + str(tmp_path / "scheme.db"))) as sql:
-            assert sql.backend == "sql"
+        with closing(open_store("local://" + str(tmp_path / "scheme.db"))) as sql:
+            assert sql.backend == "local"
 
     def test_register_custom_backend(self):
         register_backend("mymem", lambda uri: MemoryStore())
@@ -176,7 +176,7 @@ def client(tmp_path_factory):
 
     from fastapi.testclient import TestClient
     db = tmp_path_factory.mktemp("rcdb") / "db.sqlite"
-    os.environ["REXGRAPH_RCDB_URI"] = f"sqlite:///{db}"
+    os.environ["REXGRAPH_RCDB_URI"] = f"local://{db}"
     import agent.rcdb as R
     R.reset_default_store()  # drop the memo so the store picks up our URI
     from agent.server.app import app
@@ -216,7 +216,7 @@ class TestRoutes:
         assert client.post("/api/v1/db/put", json={}).status_code == 400
 
 
-class TestSqlIndex:
+class TestNativeIndex:
     def _rexes(self):
         import numpy as np
 
@@ -227,22 +227,21 @@ class TestSqlIndex:
                         targets=np.array([2, 2], dtype=np.int32))        # betti1=0
         return cycle, tree
 
-    def test_indexed_columns_and_pushdown(self, tmp_path):
+    def test_metadata_query_does_not_decode_record_payloads(self, tmp_path, monkeypatch):
         cycle, tree = self._rexes()
-        with closing(SQLStore("sqlite:///" + str(tmp_path / "idx.db"))) as s:
-            s.put("cyc", cycle, tags=["a"])
-            s.put("tre", tree, tags=["b"])
-            import sqlalchemy as sa
-            cols = {c["name"] for c in sa.inspect(s.engine).get_columns("rc_complexes")}
-            assert {"betti1", "kappa_mean", "source", "nV", "nE", "chain_valid"} <= cols
-            assert len(sa.inspect(s.engine).get_indexes("rc_complexes")) >= 3
-            assert [r.id for r in s.query(min_betti1=1)] == ["cyc"]
-            assert [r.id for r in s.query(min_betti1=1, tags_any=["a"])] == ["cyc"]
-            assert s.query(min_betti1=1, tags_any=["b"]) == []
+        with closing(LocalStore(str(tmp_path / "indexed"))) as store:
+            store.put("cyc", cycle, tags=["a"])
+            store.put("tre", tree, tags=["b"])
+            def no_decode(*args, **kwargs):
+                raise AssertionError("metadata selection decoded a graph")
+            monkeypatch.setattr(store, "get", no_decode)
+            monkeypatch.setattr(store, "read_record", no_decode)
+            assert [r.id for r in store.query(min_betti1=1, tags_any=["a"])] == ["cyc"]
+            assert store.query(min_betti1=1, tags_any=["b"]) == []
 
     def test_parity_with_memory(self, tmp_path):
         cycle, tree = self._rexes()
-        with closing(SQLStore("sqlite:///" + str(tmp_path / "p.db"))) as s:
+        with closing(LocalStore(str("local://" + str(tmp_path / "p.db")).removeprefix("local://"))) as s:
             m = MemoryStore()
             for st in (s, m):
                 st.put("cyc", cycle, tags=["a"])
@@ -251,23 +250,12 @@ class TestSqlIndex:
                       {"chain_valid": True}):
                 assert {r.id for r in s.query(**q)} == {r.id for r in m.query(**q)}
 
-    def test_migration_backfills_old_table(self, tmp_path):
-        import json
-        import sqlite3
-        import time
-        dbf = str(tmp_path / "legacy.db")
-        con = sqlite3.connect(dbf)
-        con.execute("CREATE TABLE rc_complexes(id TEXT PRIMARY KEY, signature TEXT, "
-                    "meta TEXT, created FLOAT, blob BLOB)")
-        sig = json.dumps({"nV": 3, "nE": 3, "betti": [1, 1, 0], "kappa_mean": 0.0,
-                          "chain_valid": True, "source": "legacy", "tags": ["old"]})
-        con.execute("INSERT INTO rc_complexes VALUES(?,?,?,?,?)",
-                    ("legacy", sig, "{}", time.time(), b"x"))
-        con.commit()
-        con.close()
-        with closing(SQLStore("sqlite:///" + dbf)) as s:
-            assert [r.id for r in s.query(min_betti1=1)] == ["legacy"]
-            assert [r.id for r in s.query(source="legacy")] == ["legacy"]
+    def test_sql_file_is_not_reinterpreted_as_a_native_store(self, tmp_path):
+        path = tmp_path / "legacy.db"
+        path.write_bytes(b"SQLite format 3\x00retained")
+        with pytest.raises(ValueError, match="SQL"):
+            open_store("sqlite:///" + str(path))
+        assert path.read_bytes() == b"SQLite format 3\x00retained"
 
 
 class TestWorkAsComplex:

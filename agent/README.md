@@ -38,6 +38,61 @@ as `--extras langchain,langgraph`. Install Tesseract for scanned documents,
 GPU training. The [installation guide](../README.md#installation) covers these
 optional runtimes.
 
+## SQL sources and native imports
+
+Use RCDB for Agent records and RCQL programs. SQL databases and warehouses remain
+optional read sources. Import their data into RCDB to keep a verified local copy,
+retain source declarations and run queries without the original SQL service.
+
+Install SQL support with `sh install.sh --extras sql`. Add the SQLAlchemy driver
+for your database; `--extras warehouse` includes Snowflake, BigQuery and DuckDB
+adapters. These dependencies are optional and do not change the default RCDB store.
+
+```sh
+rexgraph-connect import-sql --source-env DATABASE_URL \
+  --store local:///data/records --id warehouse \
+  --files /data/native-tables --format rcbd
+```
+
+`DATABASE_URL` contains the SQLAlchemy connection URI. An explicit URI or saved
+connection name can also be passed as the positional source. The command imports
+all tables in the selected schema; use `--schema NAME` and repeated `--table NAME`
+options to select a subset. `--batch-size` bounds each row batch. To publish another
+revision of an existing import, supply its `--expected-version`.
+
+In **RCQL Records**, select a saved SQL source, enter a source URI, or upload a
+SQLite file. **Inspect SQL source** shows its tables and keys. **Import all tables
+into RCDB** imports and verifies the data. **Download native files** exports the
+import as RCBF, RCBD, safetensors or HDF5 files. Downloads contain a ZIP of the
+manifest and table batches. Use `--format rcbf` for sequential binary files or
+`--format rcbd` for addressable directory bundles. RCBF output uses version 6;
+older readers that accept only versions 4 and 5 must be updated to read it.
+
+Imports retain row occurrences, column order, nulls, driver scalar types, declared
+primary and foreign keys, and available indexes/checks. They do not infer missing
+relations or execute SQL defaults, triggers, procedures or views. Each import records
+its source transaction isolation; repeatable snapshot guarantees depend on that source.
+SQL reads use explicit table and column selectors rather than generated SQL text.
+
+```python
+from agent.agentic_db import AgenticDB
+from agent.sql_source import SQLDataset
+
+with AgenticDB("local:///data/records") as db:
+    dataset = db.sql_dataset("warehouse")
+    for row in dataset.rows("orders"):
+        print(row)
+
+# Native exports need neither SQLAlchemy nor the original SQL service to read.
+dataset = SQLDataset.from_directory("/data/native-tables")
+```
+
+The source database is read without modification. Failed imports retain any
+published batches for inspection but do not publish a complete dataset manifest.
+Native exports are checked against stored identities before publication. General
+SQL table rows are retained as explicit native row assertions; schema diagnostics
+and application-specific relational models are separate views of that data.
+
 ## Analysis
 
 ```python
@@ -489,3 +544,32 @@ concurrency, uncertain outcomes and ledger retention, and the
 ## License
 
 Agent is distributed under the [Apache License 2.0](LICENSE).
+
+## Ontology runtime
+
+Agent's registered `.rcbo` reader and `auto_rex` load the whole relational source
+with its ontology declaration. `agent.ontology_runtime.read_ontology` uses the
+existing `RelationalSession`, checks the selected record's actual publication
+time as well as its declared knowledge horizon, and resolves evidence pins
+under the requested cutoff. The cutoff must be an `ExactTime`.
+
+`publish_ontology` publishes through the same session with an explicit expected
+record version. A child must identify the actual published parent. RCQL programs
+and Hive workers carry whole ontology values through the existing program,
+source-authority and record interfaces. See the
+[ontology query guide](../rcql/README.md#ontology-queries).
+
+`native_revision_program(name, operation="append")` declares a revision program
+with component, frame bytes and exact integer cutoff inputs. With `operation="add"`,
+the specification input carries explicit native aspect/type additions instead.
+Register the stored program through `Hive.add_program` with an explicit parent
+record version, source selectors and `allow_write=True`. The default permits
+read operations only; invocation arguments cannot override this permission.
+Execution returns a child ontology. Publish it separately with
+`publish_ontology(..., expected_version=parent_version)`, which checks the actual
+parent again. Native source integrity and declared axiom validation remain
+separate checks.
+
+Agent record publication accepts RCDB file, memory and admitted object-store
+providers. SQL sources are read through the SQL source/connector APIs; standalone
+RCDB SQL storage remains available outside Agent publication.

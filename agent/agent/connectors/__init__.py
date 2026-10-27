@@ -1,4 +1,4 @@
-"""Read relational structure from SQL, document, semantic and generic sources.
+"""Read RCDB records, custom files and declared source structures.
 
 Connector defines a read only source capability. BaseConnector supplies default
 capabilities and a result helper that validates metadata lengths. The returned
@@ -20,37 +20,17 @@ __all__ = ["Capabilities", "Connector", "BaseConnector", "ConnectorError",
 # URI scheme -> (module, class). Mirrors rcdb.open_store: one entry point that
 # routes a source URI to the connector for its shape. Each scheme resolves to
 # exactly one connector; vendor drivers are the per source delta, not new code.
-_SCHEME_MAP = {
-    "sqlite": ("sql", "SQLConnector"),
-    "postgresql": ("sql", "SQLConnector"),
-    "postgres": ("sql", "SQLConnector"),
-    "mysql": ("sql", "SQLConnector"),
-    "mariadb": ("sql", "SQLConnector"),
-    "oracle": ("sql", "SQLConnector"),
-    "mssql": ("sql", "SQLConnector"),
-    "snowflake": ("warehouse", "WarehouseConnector"),
-    "bigquery": ("warehouse", "WarehouseConnector"),
-    "redshift": ("warehouse", "WarehouseConnector"),
-    "databricks": ("warehouse", "WarehouseConnector"),
-    "mongodb": ("document", "DocumentConnector"),
-    "ontology": ("semantic", "SemanticConnector"),
-    "rdf": ("semantic", "SemanticConnector"),
-    "owl": ("semantic", "SemanticConnector"),
-    "neo4j": ("graph", "GraphConnector"),
-    "bolt": ("graph", "GraphConnector"),
-    "kafka": ("stream", "StreamConnector"),
-    "pulsar": ("stream", "StreamConnector"),
-    "edges": ("generic", "GenericConnector"),
-    "table": ("generic", "GenericConnector"),
-}
+_SCHEME_MAP = {'mongodb': ('document', 'DocumentConnector'), 'ontology': ('semantic', 'SemanticConnector'), 'rdf': ('semantic', 'SemanticConnector'), 'owl': ('semantic', 'SemanticConnector'), 'neo4j': ('graph', 'GraphConnector'), 'bolt': ('graph', 'GraphConnector'), 'kafka': ('stream', 'StreamConnector'), 'pulsar': ('stream', 'StreamConnector'), 'edges': ('generic', 'GenericConnector'), 'table': ('generic', 'GenericConnector'), 'rcdb': ('records', 'RCDBConnector'), 'rcbd': ('records', 'NativeFileConnector'), 'rcbf': ('records', 'NativeFileConnector')}
+
+from agent.record_access import SQL_SCHEMES
+for _scheme in SQL_SCHEMES:
+    _SCHEME_MAP[_scheme] = ("warehouse", "WarehouseConnector") if _scheme in {
+        "snowflake", "bigquery", "redshift", "databricks", "trino", "presto", "clickhouse", "duckdb"
+    } else ("sql", "SQLConnector")
 
 
 def open_connector(uri: str, **kwargs):
-    """Return a connector instance for ``uri``'s scheme (e.g. ``postgresql://…``
-    -> :class:`~agent.connectors.sql.SQLConnector`). Extra kwargs pass to the
-    connector (e.g. ``open_connector("sqlite:///x", with_weights=True)``).
-    Unknown schemes raise :class:`ConnectorError`. Modules are imported lazily
-    to avoid an import cycle with this package."""
+    """Resolve a registered source reader; SQL drivers are optional and lazy."""
     import importlib
     scheme = uri.split("://", 1)[0] if "://" in uri else uri
     scheme = scheme.split("+", 1)[0].lower()          # strip SQLAlchemy driver

@@ -152,7 +152,8 @@ if HAS_HDF5:
     __all__ += ["RexHDF5Format", "save_hdf5", "load_hdf5"]
 
 from .bundle import RCBDBundle, RexBundle, load_rcbd, load_rex, save_rcbd, save_rex
-from .rcbf import RCBFFormatError, load_rcbf
+from .rcbf import RCBFFormatError, load_rcbf, save_rcbf
+from .rcbo import RCBOFormatError, load_rcbo, save_rcbo, read_rcbo, write_rcbo, load_ontology, save_ontology
 
 __all__ += [
     "RCBDBundle",
@@ -163,6 +164,9 @@ __all__ += [
     "load_rex",
     "RCBFFormatError",
     "load_rcbf",
+    "save_rcbf",
+    "RCBOFormatError", "load_rcbo", "save_rcbo", "read_rcbo", "write_rcbo",
+    "load_ontology", "save_ontology",
 ]
 
 try:
@@ -491,7 +495,8 @@ register_format("rex", save=save_rcbd, load=load_rcbd)
 # writable for source compatibility. Suffix less and documented new writes use
 # `.rcbd`; this route never silently relocates a caller's explicit path.
 register_format("rex-legacy", save=save_rcbd, load=load_rcbd, extensions=[".rex"])
-register_format("rcbf", load=load_rcbf, extensions=[".rcbf"])
+register_format("rcbf", save=save_rcbf, load=load_rcbf, extensions=[".rcbf"])
+register_format("rcbo", save=save_rcbo, load=load_rcbo, extensions=[".rcbo"])
 register_format("json", save=_save_json, load=load_json, extensions=[".json"])
 register_format(
     "zarr",

@@ -419,7 +419,7 @@ def test_every_format_diagnoses_without_raising(fmt, text):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "r.sqlite"))
     from agent.rcdb import reset_default_store
     reset_default_store()
     from agent.server.app import app

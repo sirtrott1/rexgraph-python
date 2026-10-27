@@ -6,7 +6,7 @@ import pytest
 from rexgraph import Absent, Relations, TemporalRex, RexGraph, VertexTable
 from rexgraph.object_identity import object_digest
 
-FORMATS = ("rcbd", "safetensors", "h5", "zarr", "arrow", "json")
+FORMATS = ("rcbf", "rcbd", "safetensors", "h5", "zarr", "arrow", "json")
 
 
 def fixture():
@@ -85,8 +85,8 @@ def test_graph_format_chains_preserve_complete_semantic_state(first, second, tmp
     assert restored.get_metadata(1, 0, "rational") == Fraction(1, 10)
 
 
-@pytest.mark.parametrize("first", ("rcbd", "safetensors", "h5", "zarr", "json"))
-@pytest.mark.parametrize("second", ("rcbd", "safetensors", "h5", "zarr", "json"))
+@pytest.mark.parametrize("first", ("rcbf", "rcbd", "safetensors", "h5", "zarr", "json"))
+@pytest.mark.parametrize("second", ("rcbf", "rcbd", "safetensors", "h5", "zarr", "json"))
 def test_temporal_format_chains_preserve_history_and_cutoffs(first, second, tmp_path):
     graph = TemporalRex([])
     graph.append_snapshot(RexGraph.from_graph([0], [1]), at=Fraction(1, 2))

@@ -47,6 +47,14 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
     """Render one RCQL result as JSON, bounding array previews by max_values."""
     if isinstance(max_values, bool) or not isinstance(max_values, int) or max_values < 0:
         raise ValueError("max_values must be a nonnegative integer")
+    from rexgraph.ontology import OntologyState
+    if isinstance(value, OntologyState):
+        info = value.inspect()
+        dependencies = info.pop("dependencies")
+        return {"kind": "OntologyState", **json_value(info, max_values=max_values),
+                "dependency_count": len(dependencies),
+                "dependencies": json_value(dependencies[:max_values], max_values=max_values),
+                "dependencies_truncated": len(dependencies) > max_values}
     if value is Absent:
         return {"kind": "Absent"}
     if isinstance(value, Approx):
@@ -82,6 +90,24 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
     if isinstance(value, Fraction):
         return {"numerator": json_value(value.numerator, max_values=max_values),
                 "denominator": json_value(value.denominator, max_values=max_values)}
+    from rcql.program import ProgramResult
+    if isinstance(value, ProgramResult):
+        return {"kind": "ProgramResult", "program_digest": value.program_digest,
+                "output_count": len(value.values), "aliases": list(value.aliases[:max_values]),
+                "values": [json_value(v, max_values=max_values) for v in value.values[:max_values]],
+                "outputs_truncated": len(value.values) > max_values,
+                "step_count": len(value.steps),
+                "steps": [{"name": name, "output_count": len(result.values),
+                           "aliases": list(result.aliases[:max_values]),
+                           "execution_records": len(result.execution)}
+                          for name, result in value.steps[:max_values]],
+                "steps_truncated": len(value.steps) > max_values,
+                "source_count": len(value.sources),
+                "sources": json_value(value.sources[:max_values], max_values=max_values),
+                "sources_truncated": len(value.sources) > max_values,
+                "dependency_count": len(value.dependencies),
+                "dependencies": [ref.as_record() for ref in value.dependencies[:max_values]],
+                "dependencies_truncated": len(value.dependencies) > max_values}
     if isinstance(value, np.generic):
         scalar = value.item()
         if isinstance(scalar, np.generic):
@@ -174,6 +200,22 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
                            metrics="declared-unit-stalk-metrics", learned_transports=False)
                 if value.adapter_version == "2":
                     out.update(role_transports=json_value(value.configuration["role_transports"], max_values=max_values))
+            elif value.adapter == "cpp_assignment_evidence":
+                out.update(operation="exact-native-assignment-learning", trainable=True, resumable=True,
+                           parameter_storage="immutable-native-assignment-evidence",
+                           retains_whole_fields=True, retains_correlated_families=True,
+                           native_model_sha256=value.payload["sha256"], native_revision=value.payload["revision"],
+                           assignment_status=value.payload["status"], observation_count=value.payload["observation_count"],
+                           parameter_carrier=value.configuration["parameter_carrier"],
+                           availability="independent-native-context-required")
+            elif value.adapter == "cpp_finite_search":
+                out.update(operation="native-correlated-finite-projection", trainable=False, resumable=False,
+                           recipe=json_value(value.configuration["recipe"], max_values=max_values),
+                           parameter_storage="admitted-source-and-complete-request-reexecution",
+                           retains_whole_fields=True, retains_correlated_families=True,
+                           availability="independent-native-context-required",
+                           source_sha256=value.configuration["source_sha256"],
+                           available_sha256=value.configuration["available_sha256"])
             elif value.adapter == "cpp_relational_finite_operator":
                 out.update(operation="native-available-finite-operator",trainable=False,resumable=False,
                            operator_sha256=value.configuration["operator_sha256"],operator_bytes=len(value.payload["operator_archive"]),
@@ -416,12 +458,22 @@ def json_value(value: Any, *, max_values: int = 256) -> Any:
                 out["execution_receipt"] = json_value(value.execution_receipt, max_values=max_values)
             if value.field_archive is not None:
                 archive = value.field_archive
-                carrier = "operator_sha256" if "operator_sha256" in archive else "map_sha256" if "map_sha256" in archive else "program_sha256"
+                carrier = "model_sha256" if "model_sha256" in archive else "operator_sha256" if "operator_sha256" in archive else "map_sha256" if "map_sha256" in archive else "program_sha256"
                 out["field_archive"] = {"schema": archive["schema"], "bytes": len(archive["data"]),
                                         "sha256": archive["sha256"], carrier: archive[carrier],
                                         "engine_receipt": json_value(archive["engine_receipt"], max_values=max_values)}
                 out.update(value_storage="immutable-native-field-archive", retains_whole_fields=True,
                            selection="explicit node and original stalk")
+                if value.method == "exact-conditioned-assignment-response-v1":
+                    out.update(value_storage="immutable-native-conditioned-assignment-response",
+                               selection="conditioned whole fields and maps on the retained common parameter family",
+                               retains_complete_alternatives=True, executed_external_worker=False,
+                               availability="independent-native-context-required")
+                if value.method == "exact-available-finite-projection-replay-v1":
+                    out.update(value_storage="admitted-source-and-complete-request-reexecution",
+                               selection="explicit image row and original source coordinates",
+                               retains_complete_alternatives=True,
+                               availability="independent-native-context-required")
                 if value.method in {"exact-available-relational-finite-operator-family-v1", "exact-available-relational-finite-operator-evaluation-v1"}:
                     out.update(selection="explicit operator choice, target node and original target stalk",
                                retains_complete_alternatives=True,availability="independent-native-context-required",

@@ -196,6 +196,9 @@ class FileCatalog:
         loader = self._loaders.get(kind)
         if loader is not None:
             return loader(path)
+        if kind == "rcbo":
+            from .rcbo import load_rcbo
+            return load_rcbo(path).record()
         if kind in {"rcbd", "rex-legacy", "rcbf", "safetensors", "hdf5", "zarr"}:
             from rexgraph.io import load
 
@@ -416,6 +419,8 @@ def _kind(path: Path) -> str | None:
     suffix = path.suffix.lower()
     if suffix in {".h5", ".hdf5"}:
         return "hdf5"
+    if suffix == ".rcbo":
+        return "rcbo"
     if suffix in {".rcbf", ".rex"}:
         from .rcbf import is_rcbf_file
 

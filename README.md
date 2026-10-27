@@ -94,7 +94,12 @@ make serve VENV_DIR=/path/to/environment
 
 ### C++ integration
 
-Install the Python packages from this checkout, then install the `rexgraph-cpp` 0.2.1 SDK and its bridge into the same environment:
+The five Python distributions are version 1.4.0. The optional bridge is version
+0.2.0 and uses the `rexgraph-cpp` 0.3.0 SDK. The paired native revision and header
+identity are recorded in [the SDK declaration](bindings/cpp/native-sdk.json).
+
+Install the Python packages from this checkout, then install that SDK and its
+bridge into the same environment:
 
 ```sh
 make install-cpp CPP_SDK_PREFIX=/path/to/installed/sdk
@@ -172,6 +177,10 @@ print(branch.nV, branch.nE)         # 3 vertices and 1 relation
 ```
 
 Use `.venv/bin/python -I example.py` to run a saved example against the installed packages. The isolated interpreter prevents the checkout's source directories from shadowing the compiled installation. Editable installations are provided by the development profiles.
+
+Ontology snapshots retain a complete source, exact declarations, explicit parent
+revisions and evidence references in `.rcbo` files. See the
+[ontology guide](rexgraph/README.md#ontology-snapshots).
 
 ## Loading and processing data
 

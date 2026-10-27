@@ -452,7 +452,8 @@ async def call_tool(request: Request, body: dict = Body(...),
         return HTTPException(status, message)
 
     try:
-        result = call(name, context=ctx, **arguments)
+        from starlette.concurrency import run_in_threadpool
+        result = await run_in_threadpool(call, name, context=ctx, **arguments)
     except KeyError as e:
         raise _fail(404, str(e), "unknown_tool") from e
     except PermissionError as e:

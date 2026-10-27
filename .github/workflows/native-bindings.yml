@@ -1,0 +1,87 @@
+name: paired native SDK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-bridge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: select the declared native source
+        id: native
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          value = json.loads(Path('bindings/cpp/native-sdk.json').read_text())
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('revision=' + value['source_commit'] + '\n')
+          PY
+      - uses: actions/checkout@v4
+        with:
+          repository: sirtrott1/rexgraph-cpp
+          ref: ${{ steps.native.outputs.revision }}
+          path: native-source
+      - name: install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libgmp-dev libopenblas-dev
+          python -m pip install build cython scikit-build-core pytest
+      - name: install the public native SDK
+        run: |
+          cmake -S native-source -B "$RUNNER_TEMP/native-build" -G Ninja \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/native-sdk" \
+            -DRFC_BUILD_TESTS=OFF -DRFC_BUILD_APPS=OFF -DRFC_BUILD_LOCAL_TOOLS=OFF \
+            -DRFC_BUILD_BENCHMARKS=OFF -DRFC_BUILD_LEARNING=OFF -DRFC_BUILD_CAPABILITY_DEMO=OFF
+          cmake --install "$RUNNER_TEMP/native-build"
+      - name: build Core and its native bridge
+        env:
+          CMAKE_PREFIX_PATH: ${{ runner.temp }}/native-sdk
+          CMAKE_BUILD_PARALLEL_LEVEL: '1'
+        run: |
+          python -m pip install .
+          python -m pip install '.[io]' './rcdb[sql]' ./rcql './system[dev]' './agent[server]'
+          python -m pip install ./bindings/cpp
+      - name: verify the paired header identity
+        working-directory: ${{ runner.temp }}
+        env:
+          PYTHON_RELEASE_SOURCE: ${{ github.workspace }}
+        run: |
+          python -I - <<'PY'
+          import json, os
+          from pathlib import Path
+          from rexgraph_cpp._c_workflow import build_info
+          from rexgraph_cpp import source_evolution_build_info
+          source = Path(os.environ['PYTHON_RELEASE_SOURCE'])
+          expected = json.loads((source / 'bindings/cpp/native-sdk.json').read_text())
+          assert build_info()['engine_digest'] == expected['engine_digest']
+          assert source_evolution_build_info()['engine'] == expected['engine_digest']
+          PY
+      - name: run installed source and owner regressions
+        working-directory: ${{ runner.temp }}
+        env:
+          CMAKE_PREFIX_PATH: ${{ runner.temp }}/native-sdk
+        run: |
+          python -I "$GITHUB_WORKSPACE/rexgraph/tests/_support/test_installed.py" \
+            --package rexgraph --package rexgraph_cpp --package rcdb --package rcql \
+            --package system --package agent -- \
+            "$GITHUB_WORKSPACE/bindings/cpp/tests/test_bridge.py" \
+            "$GITHUB_WORKSPACE/bindings/cpp/tests/test_construction.py" \
+            "$GITHUB_WORKSPACE/bindings/cpp/tests/test_stalk_fields.py" \
+            "$GITHUB_WORKSPACE/bindings/cpp/tests/test_value_codec.py" \
+            "$GITHUB_WORKSPACE/bindings/cpp/tests/test_source_evolution.py" \
+            "$GITHUB_WORKSPACE/rexgraph/tests/test_ontology.py" \
+            "$GITHUB_WORKSPACE/rexgraph/tests/test_native_ontology.py" \
+            "$GITHUB_WORKSPACE/rcql/tests/test_ontology.py" \
+            "$GITHUB_WORKSPACE/agent/tests/test_ontology_runtime.py" -q

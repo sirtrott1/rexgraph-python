@@ -1328,6 +1328,32 @@ def rcdb_search(source, text, limit=100):
     return [_record_view(row) for row in rows]
 
 
+@register("RCDB_SELECT")
+def rcdb_select(source, filters=None, limit=100, offset=0, as_of=None, valid_at=None, include_history=False):
+    """Select bounded record summaries through the store's structural index."""
+    import math
+    from collections.abc import Mapping
+    if not hasattr(source, "query") or not hasattr(source, "list"):
+        raise TypeError("RCDB_SELECT expects an RCDB store")
+    if filters is not None and not isinstance(filters, Mapping):
+        raise TypeError("record filters require a mapping of RCDB structural predicates")
+    if type(limit) is not int or not 0 <= limit <= 10000 or type(offset) is not int or offset < 0:
+        raise ValueError("record selection requires a limit in 0..10000 and nonnegative offset")
+    if type(include_history) is not bool:
+        raise TypeError("include_history requires a boolean")
+    for value in (as_of, valid_at):
+        if value is not None and (type(value) not in (int, float) or not math.isfinite(value)):
+            raise ValueError("record selection times require finite numeric values")
+    if filters:
+        options = {"include_history": True} if include_history else {}
+        rows = source.query(limit=limit + offset, as_of=as_of, valid_at=valid_at, **options, **dict(filters))
+        rows = rows[offset:]
+    else:
+        rows = source.list(limit=limit, offset=offset, as_of=as_of, valid_at=valid_at, include_history=include_history)
+    record_method("rcdb-structural-select", limit=limit, offset=offset, as_of=as_of, valid_at=valid_at)
+    return [_record_view(row) for row in rows]
+
+
 @register("RCDB_GET")
 def rcdb_get(source, record_id):
     """Load one Rex payload from an RCDB source by exact id."""
@@ -1570,3 +1596,21 @@ def _install_task_operators(register):
 
 
 _install_task_operators(register)
+
+from .assignment import install as _install_assignment_operators
+_install_assignment_operators(register)
+
+from .relational_runtime import install as _install_relational_runtime_operators
+_install_relational_runtime_operators(register)
+
+from .layer_operators import install as _install_layer_operators
+_install_layer_operators(register)
+
+from .c_workflow_operators import install as _install_c_workflow_operators
+_install_c_workflow_operators(register)
+
+from .demand_gluing_operators import install as _install_demand_gluing_operators
+_install_demand_gluing_operators(register)
+
+from .ontology_operators import install as _install_ontology_operators
+_install_ontology_operators(register)

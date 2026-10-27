@@ -7,6 +7,22 @@ No numeric package or execution adapter is imported to parse or build a query.
 from __future__ import annotations
 
 EXPRESSION_ARGUMENTS = {
+    'RELATIONAL_CREATE': (('namespace',), ()),
+    'RELATIONAL_EXTEND': (('packet', 'operation', 'specification', 'owner'), (None,)),
+    'RELATIONAL_INFO': (('packet', 'observation', 'identity', 'owner'), ('source', None, None)),
+    'RELATIONAL_EVALUATE': (('packet', 'parameter', 'identity', 'tensor', 'owner'), (None, False, None)),
+    'RELATIONAL_PACKET': (('index',), (0,)),
+    'RELATIONAL_FIELD_FUNCTION': (('envelope', 'record', 'polynomial'), (True,)),
+    'RELATIONAL_FIELD_INFO': (('packet', 'parameter'), (None,)),
+    'ACTION_DESCRIPTION': (('recipe',), ()),
+    'ACTION_PREPARE': (('source_archive', 'endpoint', 'recipe', 'publication', 'availability'), ()),
+    'ACTION_EVIDENCE': (('envelope', 'specification'), ()),
+    'ACTION_EXECUTE': (('packet', 'evidence', 'availability', 'input_selector', 'pairs', 'owner', 'lease'), (None, (), None, None)),
+    'ACTION_RESULT': (('packet', 'evidence', 'availability'), ()),
+    'ACTION_PACKET': (('record',), (None,)),
+    'MODEL_ASSIGNMENT_EXECUTE': (('checkpoint', 'input_archive', 'execution_context', 'owner'), (None,)),
+    'MODEL_ASSIGNMENT_BATCH': (('state', 'observations', 'execution_context'), ()),
+    'MODEL_ASSIGNMENT_FIELD': (('output', 'node', 'execution_context', 'occurrences'), (False,)),
     'TASK_OUTCOME': (('output', 'task', 'asset', 'binding', 'execution_context'), ()),
     'TASK_STATUS': (('outcome', 'execution_context'), ()),
     'TASK_VERDICT': (('outcome', 'execution_context'), ()),
@@ -76,6 +92,8 @@ EXPRESSION_ARGUMENTS = {
     'RCDB_HASH': (('record_id',), ()),
     'RCDB_HISTORY': (('record_id',), ()),
     'RCDB_LIST': (('limit', 'offset'), (100, 0)),
+    'RCDB_SELECT': (('filters', 'limit', 'offset', 'as_of', 'valid_at', 'include_history'),
+                    (None, 100, 0, None, None, False)),
     'RCDB_SEARCH': (('text', 'limit'), (100,)),
     'RCDB_SECURITY': ((), ()),
     'RCDB_STATE_HASH': ((), ()),
@@ -272,4 +290,20 @@ for _name, _arguments in _TRANSFORMATION_ARGUMENTS.items():
 
 from .native_source_contracts import ARGUMENTS as _NATIVE_SOURCE_ARGUMENTS
 for _name, _arguments in _NATIVE_SOURCE_ARGUMENTS.items():
+    insert_unique(EXPRESSION_ARGUMENTS, _name, _arguments)
+
+from .layer_contracts import ARGUMENTS as _LAYER_ARGUMENTS
+for _name, _arguments in _LAYER_ARGUMENTS.items():
+    insert_unique(EXPRESSION_ARGUMENTS, _name, _arguments)
+
+from .c_workflow_contracts import ARGUMENTS as _C_WORKFLOW_ARGUMENTS
+for _name, _arguments in _C_WORKFLOW_ARGUMENTS.items():
+    insert_unique(EXPRESSION_ARGUMENTS, _name, _arguments)
+
+from .demand_gluing_contracts import ARGUMENTS as _DEMAND_GLUING_ARGUMENTS
+for _name,_arguments in _DEMAND_GLUING_ARGUMENTS.items():
+    insert_unique(EXPRESSION_ARGUMENTS,_name,_arguments)
+
+from .ontology_contracts import ARGUMENTS as _ONTOLOGY_ARGUMENTS
+for _name, _arguments in _ONTOLOGY_ARGUMENTS.items():
     insert_unique(EXPRESSION_ARGUMENTS, _name, _arguments)

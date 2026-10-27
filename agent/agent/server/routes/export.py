@@ -8,10 +8,9 @@ agent.server.routes.export: session and workspace export.
 
 from __future__ import annotations
 
-import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from agent.server.auth import TokenEntry, WorkspaceState, require_auth, require_workspace
 
@@ -98,12 +97,10 @@ async def export_workspace(
             "queries": load_query_history(ws.name),
         }
 
-    from agent.server.security import secure_tempfile
-    with secure_tempfile(suffix=f".{format}") as tmp:
-        _export(ws.name, tmp, fmt=format)
-        if os.path.exists(tmp):
-            return FileResponse(tmp, filename=f"{ws.name}.{format}")
-    raise HTTPException(500, "Export failed")
+    if format not in {"rex", "rcdb"}:
+        raise HTTPException(400, "workspace export supports rcdb, rex or json")
+    from agent.server import artifacts
+    return artifacts.download(lambda path: _export(ws.name, path, fmt=format), ".rcdb", ws.name + ".zip")
 
 
 @router.get("/queries")

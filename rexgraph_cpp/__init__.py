@@ -1,4 +1,5 @@
 """Compiled exact source and field bindings for the RexGraph C++ engine."""
+from ._source_evolution import NativeSourceEvolution, source_evolution_build_info
 from ._binary import NativeBinaryGate, NativeBinaryInput, binary_build_info, fit_binary_gate
 from ._relation import PreparedRelationResponse, relation_build_info
 from ._sections import PreparedRelationalSections, sections_build_info
@@ -70,7 +71,7 @@ from ._bridge import (
     literal_whitespace_spans,
 )
 
-__all__ = ["NativeSource", "NativeField", "NativeAlgebraicArchive", "NativeAlgebraicArchiveGraph", "NativeAlgebraicValue", "PreparedField", "NativeIntegerInput", "NativeIntegerBatch",
+__all__ = ["NativeSourceEvolution", "source_evolution_build_info", "NativeSource", "NativeField", "NativeAlgebraicArchive", "NativeAlgebraicArchiveGraph", "NativeAlgebraicValue", "PreparedField", "NativeIntegerInput", "NativeIntegerBatch",
            "PreparedIntegerNetwork", "NativeTrainer", "NativeTransport", "NativePerceptron", "NativePerceptronRows", "CancellationToken",
            "ExecutionCancelled", "ExecutionLimitError", "build_info"]
 
@@ -169,6 +170,15 @@ from ._finite_field import (
     NativeFiniteFieldResult, NativeFiniteFieldBranch, NativeFiniteFieldEvaluation,
     finite_field_build_info,
 )
+
+from ._finite_search import (
+    PreparedFiniteSearch, NativeFinitePropagation, NativeFiniteFamily,
+    NativeFiniteExtension, NativeFiniteImage, NativeFiniteImageQueries, NativeFiniteGluing, NativeFiniteGluedSection,
+    FiniteSearchCancellation, finite_search_build_info,
+)
+__all__ += ["PreparedFiniteSearch", "NativeFinitePropagation", "NativeFiniteFamily",
+            "NativeFiniteExtension", "NativeFiniteImage", "NativeFiniteImageQueries", "NativeFiniteGluing", "NativeFiniteGluedSection",
+            "FiniteSearchCancellation", "finite_search_build_info"]
 __all__ += ["NativeFiniteSource", "NativeFiniteSections", "PreparedFiniteFieldMap",
             "NativeFiniteFieldResult", "NativeFiniteFieldBranch", "NativeFiniteFieldEvaluation", "finite_field_build_info"]
 
@@ -263,3 +273,34 @@ __all__ += ["PreparedAvailableLiteralFieldFamily", "NativeAvailableLiteralJointF
             "NativeAvailableLiteralJointFieldEvaluation", "NativeJointFieldPacket",
             "joint_family_interface_payload", "joint_family_origin_payload", "joint_packet_value_origin",
             "replay_available_joint_family", "replay_joint_reader_input", "available_literal_field_family_build_info"]
+
+from ._assignment import (
+    NativeAssignmentEvidence, NativeAssignmentSolve, NativeAssignmentResponse,
+    assignment_root_origin_payload, assignment_measurement_origin_payload, assignment_build_info,
+    assignment_input_origins,
+)
+__all__ += ["NativeAssignmentEvidence", "NativeAssignmentSolve", "NativeAssignmentResponse",
+            "assignment_root_origin_payload", "assignment_measurement_origin_payload", "assignment_build_info"]
+__all__ += ["assignment_input_origins"]
+
+
+def __getattr__(name):
+    if name in {"NativeActionProgram", "NativeActionEvidence", "NativeActionResult", "NativeActionLease", "action_program_build_info", "action_description"}:
+        from importlib import import_module
+        try:
+            module = import_module("._action_program", __name__)
+        except ModuleNotFoundError as exc:
+            if exc.name == __name__ + "._action_program":
+                raise AttributeError("RexTemporal action bindings were not selected for this native build") from exc
+            raise
+        return getattr(module, name)
+    if name in {"NativeRelationalRuntime", "NativeRelationalFieldFunction", "NativeRelationalWholeField", "temporal_program_build_info"}:
+        from importlib import import_module
+        try:
+            module = import_module("._temporal_program", __name__)
+        except ModuleNotFoundError as exc:
+            if exc.name == __name__ + "._temporal_program":
+                raise AttributeError("RexTemporal bindings were not selected for this native build") from exc
+            raise
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -89,3 +89,11 @@ FROM FILE("files", "root0/corpus.rcbd") RETURN BETTI(1), STATE_HASH()
 names, including slashes. Applications can supply explicit format loaders
 through `system.register_catalog(..., loaders=...)`; the catalog interface
 itself does not require RCDB.
+
+## Ontology results
+
+System renders an `OntologyState` as a bounded inspection with source and
+ontology identities, revision, horizon, counts and selected dependency references.
+The preview does not expand whole signatures or native archives. Complete typed
+query results retain those values through the existing result codecs. See the
+[ontology operators](../rcql/README.md#ontology-queries).

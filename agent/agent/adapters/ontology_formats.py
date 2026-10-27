@@ -740,3 +740,5 @@ def register(register_reader=None) -> None:
         if not exts:
             continue
         register_reader(f"ontology_{name}", load_ontology_file, extensions=exts)
+    from agent.ontology_runtime import register as register_rcbo
+    register_rcbo(register_reader)

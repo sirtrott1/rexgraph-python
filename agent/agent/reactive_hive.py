@@ -46,20 +46,25 @@ class ReactiveHive:
     database), versioning each change with its cause. Every trigger is exact structural (a Betti
     number, a set difference, a flag), never a tuned threshold."""
 
-    def __init__(self, hive, schema: HiveSchema | None = None, *, store=None, provisioners=None):
+    def __init__(self, hive, schema: HiveSchema | None = None, *, store=None, provisioners=None,
+                 implementations=None):
         self.hive = hive
         self.schema = schema or HiveSchema(hive, store=store)
         self._deployed: set = set()          # remember fixes so we do not redeploy each tick
         self.provisioners = dict(_PROVISIONERS)
         if provisioners:
             self.provisioners.update(provisioners)
+        self.implementations = dict(implementations or {})
 
     def _deploy(self, name, *, worker_type, specialties, cause, key=None) -> dict | None:
         """Deploy a worker, version the schema with the cause, and remember it (idempotent)."""
         key = key or name
         if key in self._deployed:
             return None
-        self.hive.add_worker(name, lambda d, **k: d, capability="analyze",
+        handler = self.implementations.get(key, self.implementations.get(name))
+        if not callable(handler):
+            return {"unmet": key, "cause": cause, "reason": "no registered worker implementation"}
+        self.hive.add_worker(name, handler, capability="analyze",
                              worker_type=worker_type, specialties=specialties)
         self._deployed.add(key)
         v = self.schema.snapshot(cause=cause)
@@ -70,8 +75,9 @@ class ReactiveHive:
         mention it). Exact set membership, no scoring cutoff."""
         n = need.lower()
         for b in self.hive.bees():
-            hay = " ".join([b.worker_type or "", b.capability or "", *(b.specialties or [])]).lower()
-            if n in hay:
+            declared = {value.lower() for value in [b.capability or "", *(b.worker_type or "").split(":"),
+                                                    *(b.specialties or [])]}
+            if n in declared:
                 return True
         return False
 
@@ -132,7 +138,7 @@ class ReactiveHive:
         if obs["deadlock_cycles"] > 0:
             hr = obs.get("health_ratio")
             kind = "" if hr is None else " irreducible" if hr >= 1 else " fillable"
-            cause = ("coordination deadlock (beta_1=%d,%s harmonic=%.2f, locus=%s) -> deployed mediator"
+            cause = ("coordination deadlock (beta_1=%d,%s harmonic=%.2f, locus=%s) requires mediator"
                      % (obs["deadlock_cycles"], kind, obs["persistent"], ",".join(obs["locus"]) or "-"))
             name, wt, sp = self.provisioners["mediate"]
             a = self._deploy(name, worker_type=wt, specialties=sp, key="mediate", cause=cause)
@@ -146,7 +152,7 @@ class ReactiveHive:
         for name in divergent:
             a = self._deploy(f"guard.{name}", worker_type="analyzer:guard",
                              specialties=["review", "validate", name], key=f"guard.{name}",
-                             cause=f"divergent worker '{name}' (alignment field) -> deployed guard.{name}")
+                             cause=f"divergent worker '{name}' (alignment field) requires guard.{name}")
             if a:
                 a["rule"] = "divergence"; actions.append(a)
 
@@ -166,7 +172,7 @@ class ReactiveHive:
                 continue
             name, wt, sp = spec
             a = self._deploy(name, worker_type=wt, specialties=sp, key=need,
-                             cause=cause or f"capability gap: '{need}' unmet -> deployed {name}")
+                             cause=cause or f"capability gap: '{need}' requires {name}")
             if a:
                 a["rule"] = "capability"; a["need"] = need
                 actions.append(a)
@@ -186,7 +192,7 @@ class ReactiveHive:
         if unreliable:
             why.append("structurally unreliable answer")
         a = self._deploy("verifier", worker_type="analyzer:verify", specialties=["verify", "check"],
-                         key="verify", cause="reliability gap ({}) -> deployed verifier".format("; ".join(why)))
+                         key="verify", cause="reliability gap ({}) requires verifier".format("; ".join(why)))
         if a:
             a["rule"] = "reliability"
             return [a]
@@ -228,10 +234,11 @@ class ReactiveHive:
     def _infer_needs(self, task: str) -> list[str]:
         """The roles a task implies, by which provisioner keys/specialties its words mention. Exact
         word presence (set membership), not a scored match."""
-        t = (task or "").lower()
+        import re
+        words = set(re.findall(r"\w+", (task or "").lower()))
         needs = []
         for need, (_name, _wt, specs) in self.provisioners.items():
-            if need in t or any(s in t for s in specs):
+            if need in words or any(s in words for s in specs):
                 needs.append(need)
         return needs
 

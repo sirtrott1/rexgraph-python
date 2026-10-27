@@ -17,9 +17,8 @@ topology*:
     absent - candidate missing foreign keys / normalization hints.
   * Coherence + degree = structurally central tables ("god tables").
 
-Input can be a JSON spec, SQL DDL, or a live database (reflected via
-SQLAlchemy, so you can diagnose the schema of any database the RCDB
-already talks to).
+Inputs are offline JSON schema declarations, SQL DDL or document samples.
+No live SQL connection is opened.
 """
 
 from __future__ import annotations
@@ -241,56 +240,10 @@ def _parse_ddl_regex(ddl: str) -> SchemaModel:
     return SchemaModel(tables=tables, foreign_keys=fks)
 
 
-def reflect_schema(conn_str: str) -> SchemaModel:
-    """Reflect a live database's schema via SQLAlchemy (any backend).
-
-    Read only reflection; credentials are never returned in the model.
-    """
-    from sqlalchemy import create_engine, inspect
-    # short connect timeout so a bad host fails fast rather than hanging
-    engine = create_engine(conn_str, connect_args={})
-    # dispose on every exit path. Without it the engine's pooled connection stayed
-    # open until the garbage collector reached it, which is a ResourceWarning on
-    # sqlite and a held server connection on a networked database.
-    try:
-        insp = inspect(engine)
-        tables, fks = [], []
-        try:
-            names = insp.get_table_names()
-            for schema in (insp.get_schema_names() if hasattr(insp, "get_schema_names") else []):
-                if schema in ("information_schema", "pg_catalog", "sys"):
-                    continue
-        except Exception as e:
-            raise RuntimeError(f"could not read schema: {e}") from e
-        for name in names:
-            col_info = insp.get_columns(name)
-            cols = [c["name"] for c in col_info]
-            nullable_of = {c["name"]: c.get("nullable", True) for c in col_info}
-            try:
-                pk = insp.get_pk_constraint(name).get("constrained_columns", []) or []
-            except Exception:
-                pk = []
-            pk_set = set(pk)
-            tables.append(TableDef(name=name, columns=cols, primary_key=pk))
-            for fk in insp.get_foreign_keys(name):
-                if fk.get("referred_table"):
-                    child_cols = fk.get("constrained_columns", []) or []
-                    # mandatory if any FK column is NOT NULL; identifying if the FK
-                    # columns are part of the child's primary key (composition)
-                    mandatory = any(not nullable_of.get(c, True) for c in child_cols)
-                    identifying = bool(child_cols) and set(child_cols) <= pk_set
-                    on_delete = ((fk.get("options") or {}).get("ondelete") or "").upper()
-                    fks.append(ForeignKey(
-                        from_table=name,
-                        from_cols=child_cols,
-                        to_table=fk["referred_table"],
-                        to_cols=fk.get("referred_columns", []) or [],
-                        nullable=not mandatory,
-                        identifying=identifying,
-                        on_delete=on_delete))
-        return SchemaModel(tables=tables, foreign_keys=fks)
-    finally:
-        engine.dispose()
+def reflect_schema(conn_str: str):
+    """Reflect an explicitly selected optional SQL source."""
+    from agent.sql_source import SQLSource, schema_model
+    return schema_model(SQLSource(conn_str).catalog())
 
 
 def infer_mongo_schema(collections: dict[str, list[dict]]) -> SchemaModel:
@@ -434,36 +387,14 @@ def export_schema_ddl(model: SchemaModel, dialect: str = "generic") -> str:
     return "\n\n".join(lines) + "\n"
 
 
-def list_tables(conn_str: str, with_counts: bool = False) -> list[dict]:
-    """List a live database's tables with column/PK/FK counts (read only).
-    If ``with_counts``, also include a best effort ``rows`` count per table."""
-    from sqlalchemy import create_engine, inspect, text
-    engine = create_engine(conn_str)
-    insp = inspect(engine)
-    out = []
-    conn = engine.connect() if with_counts else None
-    try:
-        for name in insp.get_table_names():
-            entry = {
-                "table": name,
-                "columns": len(insp.get_columns(name)),
-                "foreign_keys": len(insp.get_foreign_keys(name)),
-                "primary_key": insp.get_pk_constraint(name).get("constrained_columns", []) or [],
-            }
-            if conn is not None:
-                try:
-                    entry["rows"] = int(conn.execute(text(f'SELECT COUNT(*) FROM "{name}"')).scalar() or 0)
-                except Exception:
-                    try:
-                        entry["rows"] = int(conn.execute(text(f"SELECT COUNT(*) FROM {name}")).scalar() or 0)
-                    except Exception:
-                        entry["rows"] = None
-            out.append(entry)
-    finally:
-        if conn is not None:
-            conn.close()
-        engine.dispose()          # release the pool, not just the one connection
-    return out
+def list_tables(conn_str: str, with_counts: bool=False):
+    """Read an optional SQL catalog; exact row counts are requested explicitly."""
+    from agent.sql_source import SQLSource
+    with SQLSource(conn_str) as source:
+        return [{"table":info["table"],"columns":len(info["columns"]),
+                 "foreign_keys":None if info["foreign_keys"] is None else len(info["foreign_keys"]),
+                 **({"rows":_row_count(source._connection,source.engine,info["table"])} if with_counts else {})}
+                for info in source.catalog()]
 
 
 # schema -> relational complex
@@ -668,8 +599,10 @@ def schema_to_rex(model: SchemaModel, face_selection: str = "coparticipation",
         for e, (a, b) in enumerate(edge_tables):
             val = weights.get(f"{a}->{b}")
             if val is not None:
-                with contextlib.suppress(TypeError, ValueError):
-                    w_arr[e] = max(float(val), 1e-9)
+                magnitude = float(val)
+                if not np.isfinite(magnitude) or magnitude < 0:
+                    raise ValueError("schema weights must be finite and nonnegative")
+                w_arr[e] = magnitude
         w_E = w_arr
     from rexgraph.graph import RexGraph
     from rexgraph.relations import Relations, VertexTable
@@ -1048,8 +981,10 @@ def schema_strain(model: SchemaModel, weights=None):
     for e, (a, b) in enumerate(edges):
         key = f"{a}->{b}"
         if key in weights and weights[key] is not None:
-            with contextlib.suppress(TypeError, ValueError):
-                w[e] = max(float(weights[key]), 1e-9)
+            magnitude = float(weights[key])
+            if not np.isfinite(magnitude) or magnitude < 0:
+                raise ValueError("schema weights must be finite and nonnegative")
+            w[e] = magnitude
     # gradient tower curvature localizations (fire on spans/junctions, unlike
     # the face bound curvature below):
     #   relation_load: per edge fan out (which relation)
@@ -1119,64 +1054,23 @@ def schema_strain(model: SchemaModel, weights=None):
 
 
 def _row_count(conn, engine, table, approximate=False):
-    """Count rows, preferring a fast catalog estimate in approximate mode
-    (dialect aware), falling back to exact COUNT(*)."""
-    from sqlalchemy import text
-    if approximate:
-        d = engine.dialect.name
-        try:
-            if d == "postgresql":
-                r = conn.execute(text("SELECT reltuples::bigint FROM pg_class "
-                                      "WHERE relname = :t"), {"t": table}).scalar()
-            elif d == "mysql":
-                r = conn.execute(text("SELECT table_rows FROM information_schema.tables "
-                                      "WHERE table_name = :t"), {"t": table}).scalar()
-            elif d in ("mssql", "sqlserver"):
-                r = conn.execute(text("SELECT SUM(row_count) FROM sys.dm_db_partition_stats "
-                                      "WHERE object_id = OBJECT_ID(:t) AND index_id < 2"),
-                                 {"t": table}).scalar()
-            else:
-                r = None
-            if r is not None and int(r) > 0:
-                return int(r)
-        except Exception:
-            pass
-    try:
-        return int(conn.execute(text(f'SELECT COUNT(*) FROM "{table}"')).scalar() or 0)
-    except Exception:
-        try:
-            return int(conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar() or 0)
-        except Exception:
-            return 0
+    """Count a reflected table without interpolating identifiers."""
+    if approximate:raise NotImplementedError("catalog-estimate cardinalities require a declared approximation profile")
+    import sqlalchemy as sa
+    target=sa.Table(table,sa.MetaData(),autoload_with=conn,resolve_fks=False)
+    return int(conn.scalar(sa.select(sa.func.count()).select_from(target)))
 
 
-def pull_cardinality_stats(conn_str: str, model: SchemaModel = None,
-                           approximate: bool = False):
-    """Weight each foreign key by real data magnitude from a live database.
-
-    Cardinality ≈ child_row_count / parent_row_count (average fan out). In
-    ``approximate`` mode, uses fast catalog estimates (pg_class.reltuples,
-    information_schema.table_rows, sys.dm_db_partition_stats) instead of
-    COUNT(*): essential on very large tables. Returns ``(weights, row_counts)``.
-    """
-    from sqlalchemy import create_engine
-    if model is None:
-        model = reflect_schema(conn_str)
-    engine = create_engine(conn_str)
-    counts = {}
-    try:
-        with engine.connect() as c:
-            for t in model.table_names():
-                counts[t] = _row_count(c, engine, t, approximate=approximate)
-    finally:
-        engine.dispose()          # the with block closes the connection, not the pool
-    weights = {}
-    for fk in model.foreign_keys:
-        child = counts.get(fk.from_table, 0)
-        parent = counts.get(fk.to_table, 0)
-        if parent > 0 and child > 0:
-            weights[f"{fk.from_table}->{fk.to_table}"] = max(child / parent, 1e-9)
-    return weights, counts
+def pull_cardinality_stats(conn_str: str, model: SchemaModel=None, approximate: bool=False):
+    """Read exact counts and defined child/parent ratios as observations."""
+    from fractions import Fraction
+    from agent.sql_source import SQLSource,schema_model
+    with SQLSource(conn_str) as source:
+        model=model or schema_model(source.catalog())
+        counts={name:_row_count(source._connection,source.engine,name,approximate) for name in model.table_names()}
+    weights={f"{fk.from_table}->{fk.to_table}":Fraction(counts[fk.from_table],counts[fk.to_table])
+             for fk in model.foreign_keys if counts.get(fk.to_table,0)>0}
+    return weights,counts
 
 
 # diagnosis

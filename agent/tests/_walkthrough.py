@@ -217,7 +217,7 @@ class Walk:
 
 @pytest.fixture
 def walk(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "rcdb.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "rcdb.sqlite"))
     monkeypatch.setenv("REXGRAPH_CONFIG_DIR", str(tmp_path / "cfg"))
     # /models/pull otherwise blocks for minutes on a HuggingFace resolve; offline
     # makes it fail fast, which is what we want to observe here anyway.
@@ -286,7 +286,7 @@ def test_walkthrough(walk, tmp_path, capsys):
         F["pid"] = (((r["json"] or {}).get("profile") or {}).get("id")) or "attach"
 
         # dbmanager connection
-        sqlite_uri = "sqlite:///" + str(tmp_path / "walk.sqlite")
+        sqlite_uri = "local://" + str(tmp_path / "walk.sqlite")
         w.call("POST", "/api/v1/dbmanager/connections", note="fixture: connection",
                json={"name": "walkconn", "uri": sqlite_uri, "kind": "sql"})
 

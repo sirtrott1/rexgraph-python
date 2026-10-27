@@ -57,8 +57,11 @@ def validate_connector(connector: Any, source: Any = None,
         rex, meta = connector.read(source)
         labels = meta.get("vertex_labels")
         edges = meta.get("edges")
-        ok = bool(labels) and edges is not None and "source" in meta
-        ok = ok and all(len(e) == 2 for e in edges)
+        from rexgraph import RexGraph
+        whole_complex = isinstance(rex, RexGraph)
+        ok = "source" in meta and (whole_complex or (bool(labels) and edges is not None))
+        if edges is not None:
+            ok = ok and all(len(e) == 2 for e in edges)
         if meta.get("weights") is not None:
             ok = ok and len(meta["weights"]) == len(edges)
         if meta.get("modality") is not None:
@@ -72,7 +75,9 @@ def validate_connector(connector: Any, source: Any = None,
 
     # 2. builds in the engine
     try:
-        g = to_rexgraph(rex, meta)
+        from .records import NativeFileConnector, RCDBConnector
+        native_reader = isinstance(connector, (NativeFileConnector, RCDBConnector))
+        g = rex if native_reader else to_rexgraph(rex, meta)
         chi = np.asarray(g.structural_character, dtype=float)
         # per edge structural character: one row per edge. The channel count is
         # 4 (T,G,F,C) once the complex is non trivial; it degenerates for a
@@ -132,8 +137,9 @@ def validate_connector(connector: Any, source: Any = None,
     # against a *live* source is a per integration review item in the host env.
     try:
         rex2, meta2 = connector.read(source)
-        g2 = to_rexgraph(rex2, meta2)
-        deterministic = (g2.nV == g.nV and g2.nE == g.nE
+        g2 = rex2 if native_reader else to_rexgraph(rex2, meta2)
+        from rexgraph.object_identity import object_digest
+        deterministic = (object_digest(g2) == object_digest(g)
                          and meta2.get("vertex_labels") == meta.get("vertex_labels"))
         write_surface = [m for m in ("write", "put", "insert", "update",
                                      "delete", "execute", "commit")

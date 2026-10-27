@@ -1,17 +1,9 @@
-"""
-agent.hallucination: structural hallucination detection.
+"""Structural exchange observations for model responses.
 
-Builds a relational complex from a model response and compares
-its topology against the source document. Structural divergence
-indicates the model invented relationships, contradicted the
-document's structure, or introduced entities that create voids
-not present in the source.
-
-Uses compiled kernels:
-    _cross_complex.align_by_labels
-    _cross_complex.cross_complex_kappa
-    _cross_complex.cross_complex_void_fraction
-    _cross_complex.cross_complex_bridge
+These diagnostics describe the constructed exchange. They do not certify a
+proposition, completeness of its source, or a hallucination probability. Exact
+source-relative claims and answers use owning native families and current
+proofs through FamilyVerifier; unrelated diagnostics cannot substitute for them.
 """
 
 from __future__ import annotations
@@ -26,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FlaggedClaim:
-    """A specific structural inconsistency in the response."""
+    """A structural divergence observed in the chosen text construction."""
     source_label: str
     target_label: str
     reason: str          # void_creation, channel_mismatch, kappa_drop
-    severity: float      # 0-1, higher = more likely hallucination
+    severity: float      # structural diagnostic magnitude, not a probability
     detail: str = ""
     criticality: float = 1.0   # the relation's effective resistance (1 = bridge, low = redundant)
 
@@ -46,7 +38,10 @@ class HallucinationReport:
     hodge_divergence: tuple = (0.0, 0.0, 0.0)
     new_voids: int = 0
     flagged_claims: list[FlaggedClaim] = field(default_factory=list)
-    overall_score: float = 0.0    # 0 = trustworthy, 1 = hallucinated; the WORST axis
+    overall_score: float | None = None
+    evaluation_status: str = "not_evaluated"
+    reasons: list[str] = field(default_factory=list)
+    observation_kind: str = "exchange_structure"
     #: the deficiency PROFILE the score is the maximum of: sparsity / incoherence /
     #: unshared. Kept because the axes measure different things and a caller reading
     #: only the scalar cannot tell which one fired.
@@ -57,31 +52,23 @@ class HallucinationReport:
         return len(self.flagged_claims)
 
     def summary(self):
-        # The verdict comes from an EXACT invariant: how many claims were flagged,
-        # not from bands over a continuous score. A claim is flagged or it is not, and
-        # "no claim diverged" is a different statement from "the average divergence is
-        # under 0.2". The score is still reported, so a caller with its own policy has
-        # the magnitude.
-        if self.n_flags == 0:
-            verdict = "structurally consistent"
-        elif self.n_flags < self.n_shared_entities:
-            verdict = "minor divergences"
-        else:
-            verdict = "significant structural divergence"
-        return (
-            f"{verdict} (score={self.overall_score:.2f}, "
-            f"shared={self.n_shared_entities}, "
-            f"kappa_corr={self.kappa_correlation:.3f}, "
-            f"flags={self.n_flags})"
-        )
+        if self.evaluation_status != "evaluated":
+            return self.evaluation_status + (": " + "; ".join(self.reasons) if self.reasons else "")
+        return (f"exchange structure measured; {self.n_flags} divergence flags "
+                f"(shared={self.n_shared_entities}, kappa_corr={self.kappa_correlation:.3f})")
+
+    def as_record(self):
+        from dataclasses import asdict
+        return {**asdict(self), "summary": self.summary(), "n_flags": self.n_flags,
+                "n_shared": self.n_shared_entities}
 
 
 def detect_hallucinations_exchange(
     source_text: str,
     response_text: str,
-    threshold: float = 0.3,
+    threshold: float | None = None,
 ) -> HallucinationReport:
-    """Detect hallucinations by building the exchange as a single relational complex.
+    """Measure the exchange as a single relational complex.
 
     Instead of comparing two separate complexes, builds one complex
     containing both input and output with exchange edges bridging
@@ -90,11 +77,17 @@ def detect_hallucinations_exchange(
     """
     from agent.exchange import build_exchange_complex
 
-    rex, ex_result, ec = build_exchange_complex(source_text, response_text)
-
     report = HallucinationReport()
+    if threshold is not None:
+        raise ValueError("exchange observations do not use a decision threshold")
+    try:
+        rex, ex_result, ec = build_exchange_complex(source_text, response_text)
+    except Exception as exc:
+        report.evaluation_status = "error"
+        report.reasons.append(f"exchange construction failed: {type(exc).__name__}: {exc}")
+        return report
     if rex is None:
-        report.overall_score = 0.5
+        report.reasons.append("no comparable exchange complex")
         return report
 
     report.n_source_entities = ex_result.n_input_vertices
@@ -109,6 +102,7 @@ def detect_hallucinations_exchange(
 
     # Score based on exchange edge density and kappa
     if ex_result.n_shared > 0:
+        report.evaluation_status = "evaluated"
         # Exchange edge density: how many shared entities have
         # consistent relational structure in both input and output
         max_possible = ex_result.n_shared * (ex_result.n_shared - 1) // 2
@@ -157,15 +151,16 @@ def detect_hallucinations_exchange(
                             severity=float(vc['n_voids']) / max(vc.get('n_potential', 1), 1),
                             detail="%d %s-dominant voids in exchange" % (vc['n_voids'], dom),
                         ))
-            except Exception:
-                pass
+            except Exception as exc:
+                report.evaluation_status = "partial"
+                report.reasons.append(f"void comparison unavailable: {type(exc).__name__}: {exc}")
 
-        # The WORST deficiency, not the average. `max` is an exact extremum rather than
-        # a statistic, it does not move when a term is absent, and reading a profile
-        # conservatively is what a trust score is for. The profile is on
-        # `report.deficiency` for a caller that wants the axes.
+        # This extremum summarizes the structural deficiency profile. It is not
+        # a calibrated confidence or a verdict on any source proposition.
         report.overall_score = float(max(scores)) if scores else 0.0
     else:
-        report.overall_score = 0.8  # no shared entities = very suspicious
+        report.evaluation_status = "unsupported"
+        report.reasons.append("no shared entity interface in the text construction")
+        report.deficiency = {"unshared": 1.0}
 
     return report

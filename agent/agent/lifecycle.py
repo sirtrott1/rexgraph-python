@@ -306,7 +306,7 @@ def _ingest(ctx: RunContext) -> dict:
     return out
 
 
-@register_phase("pipeline", "End-to-end: source -> complex -> RCDB -> train -> predict -> hive worker -> SQL sink.")
+@register_phase("pipeline", "End-to-end: source -> complex -> RCDB -> train -> predict -> hive worker -> RCDB publication.")
 def _pipeline(ctx: RunContext) -> dict:
     """Thread the data to agent flow as one operation. Every stage is optional and driven by params:
 
@@ -315,7 +315,7 @@ def _pipeline(ctx: RunContext) -> dict:
         archetype (+steps/optimizer) -> train a model, checkpointed through the IO layer
         predict                      -> run the trained model and evaluate
         worker                       -> register the model as a capability worker in the hive
-        sink                         -> write predictions back to a SQL database (rexgraph.io)
+        sink                         -> publish complete predictions to RCDB with sink_expected_version
 
     Each configured stage streams into the run log. Returns a summary of what ran."""
     import os
@@ -324,7 +324,7 @@ def _pipeline(ctx: RunContext) -> dict:
     p = ctx.profile
     out: dict = {"stages": []}
 
-    # 1-3: source -> relational complex bundle (a rexgraph.io/SQL source, or a TrustGraph core)
+    # 1-3: source -> relational complex bundle (a local rexgraph.io file or selected RCDB source, or a TrustGraph core)
     if ctx.params.get("triples") or ctx.params.get("flow"):
         ctx.log("stage: TrustGraph core -> relational complex")
         bundle = models.bundle_from_core(ctx.params.get("triples"), url=ctx.params.get("url"),
@@ -335,7 +335,7 @@ def _pipeline(ctx: RunContext) -> dict:
         bundle = models.load_bundle(ctx.params["source"])
         out["stages"].append("source")
     else:
-        return {"skipped": "need 'source' (a rexgraph.io/SQL source) or 'triples'/'url'+'flow'"}
+        return {"skipped": "need 'source' (a local rexgraph.io file or selected RCDB source) or 'triples'/'url'+'flow'"}
     out["n"] = int(len(bundle.y)) if bundle.y is not None else 0
     ctx.log(f"complex bundle: kind={bundle.kind} n={out['n']}")
 
@@ -382,21 +382,22 @@ def _pipeline(ctx: RunContext) -> dict:
         out["stages"].append("worker")
         ctx.log(f"stage: registered model as hive worker '{ctx.params['worker']}'")
 
-    # 8: write predictions back to a SQL database through rexgraph.io
+    # Publish complete predictions with an explicit RCDB revision guard.
     if ctx.params.get("sink") and preds is not None:
-        try:
-            import pandas as pd
-
-            import rexgraph.io as rio
-            eng = rio.get_engine(ctx.params["sink"])
-            col = preds.reshape(len(preds), -1)[:, 0]
-            pd.DataFrame({"row": range(len(preds)), "prediction": col}).to_sql(
-                ctx.params.get("sink_table", "predictions"), eng, if_exists="replace", index=False)
-            out["sink"] = ctx.params.get("sink_table", "predictions")
-            out["stages"].append("sink")
-            ctx.log(f"stage: wrote {len(preds)} predictions -> {ctx.params['sink']}")
-        except Exception as e:
-            ctx.log(f"sink skipped ({e})")
+        from .record_access import check_store_uri
+        from .relational import RelationalSession
+        from . import rcdb
+        from rcql import Result
+        from contextlib import closing
+        uri = check_store_uri(ctx.params["sink"])
+        if "sink_expected_version" not in ctx.params:
+            raise ValueError("prediction publication requires sink_expected_version")
+        with closing(rcdb.open_store(uri)) as store:
+            record = RelationalSession(store).publish(ctx.params.get("sink_record", "predictions"),
+                Result((preds,)), expected_version=ctx.params["sink_expected_version"])
+        out["sink"] = {"record_id": record.id, "version": record.version}
+        out["stages"].append("sink")
+        ctx.log(f"stage: published {len(preds)} complete predictions in RCDB")
 
     ctx.log(f"pipeline complete: {' -> '.join(out['stages'])}")
     return out

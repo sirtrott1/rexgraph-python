@@ -4,7 +4,7 @@ retrieve_from_store called store.list(limit=10**6) and filtered in Python, so ev
 query was O(all records) and every candidate's signature crossed the process
 boundary. Fine for five documents; fatal for a consortium.
 
-The fix is a label predicate the store can answer itself: SQLStore resolves it in an
+The fix is a label predicate the store can answer itself: LocalStore resolves it in an
 indexed table and returns only matching rows, while Memory/File match the full
 vocabulary already carried in record meta. The retrieval prefilter stops being a
 Python scan over everything.
@@ -36,14 +36,14 @@ def _corpus():
     return c
 
 
-@pytest.fixture(params=["memory", "file", "sql"])
+@pytest.fixture(params=['memory', 'file', 'local'])
 def store(request, tmp_path):
     if request.param == "memory":
         st = rcdb.MemoryStore()
     elif request.param == "file":
         st = rcdb.FileStore(str(tmp_path / "store"), read_only=False)
     else:
-        st = rcdb.SQLStore(f"sqlite:///{tmp_path / 'rc.sqlite'}")
+        st = rcdb.LocalStore(str(f"local://{tmp_path / 'rc.sqlite'}").removeprefix("local://"))
     _corpus().persist(st)
     # yield, not return: a SQL store holds a connection pool that stays open
     # until the collector reaches it unless the owner closes it.
@@ -134,24 +134,13 @@ def test_a_prefix_still_scopes_retrieval(store):
     assert sections and all(s["doc_id"].startswith("other/") for s in sections)
 
 
-def test_sql_pushes_the_label_predicate_into_the_database(tmp_path):
-    """Not just the same answer: SQLStore must resolve labels in SQL rather than
-    reading every row back and filtering in Python."""
-    st = rcdb.SQLStore(f"sqlite:///{tmp_path / 'rc.sqlite'}")
-    try:
-        _corpus().persist(st)
-
-        seen = []
-        real_row_to_record = st._row_to_record
-
-        def counting(row):
-            seen.append(1)
-            return real_row_to_record(row)
-
-        st._row_to_record = counting
-        hits = st.query(labels_any=["frustration"], limit=50)
+def test_native_label_selection_does_not_decode_payloads(tmp_path, monkeypatch):
+    from contextlib import closing
+    with closing(rcdb.LocalStore(str(tmp_path / "records"))) as store:
+        _corpus().persist(store)
+        def no_decode(*args, **kwargs):
+            raise AssertionError("metadata selection decoded a graph")
+        monkeypatch.setattr(store, "get", no_decode)
+        monkeypatch.setattr(store, "read_record", no_decode)
+        hits = store.query(labels_any=["frustration"], limit=50)
         assert {r.id for r in hits} == {"channels"}
-        assert len(seen) == 1, f"materialized {len(seen)} rows for a 1-record answer"
-
-    finally:
-        st.close()

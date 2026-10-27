@@ -37,6 +37,8 @@ def ingest_molecules(store, path, *, document_id, record_id=None, reader=None, e
     from agent.adapters.formats import read, reader_fn
     from agent.auto import build_rex_from_edges
     from rcdb.core import VersionConflictError
+    from agent.record_access import require_store
+    store = require_store(store)
     if not isinstance(document_id, str) or not document_id.strip():
         raise ValueError("document_id is required")
     rid = document_id if record_id is None else record_id

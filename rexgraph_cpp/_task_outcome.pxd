@@ -62,3 +62,8 @@ cdef class NativeTaskOutcome:
     cdef size_t _maximum
     cdef bint _loading
     cdef shared_ptr[TaskOutcomeBridge] _pin(self) except *
+
+cdef TaskBinding _binding(value, vector[size_t] bounds)
+cdef class _Sink:
+    cdef object write, error
+cdef int _write(void*, const char*, size_t) noexcept with gil

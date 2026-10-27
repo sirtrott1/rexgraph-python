@@ -27,7 +27,8 @@ class ChangeSource:
     (id, version)."""
 
     def __init__(self, store, *, actions=("rcdb.put",), skip_tag=DERIVED_TAG):
-        self.store = store
+        from agent.record_access import require_store
+        self.store = require_store(store)
         self.actions = tuple(actions)
         self.skip_tag = skip_tag
         self._sub = None
@@ -109,7 +110,8 @@ class OnlineLoop:
                  write_back=False, derived_suffix="::online"):
         from rexgraph.flow.navigator import FieldNavigator
         from rexgraph.graph import TemporalRex
-        self.store = store
+        from agent.record_access import require_store
+        self.store = require_store(store)
         self.navigator = navigator if navigator is not None else FieldNavigator()
         if learner is not None:
             self.learner = learner

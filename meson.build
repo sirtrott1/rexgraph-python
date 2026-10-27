@@ -8,7 +8,7 @@ project(
     'c', 'cython',
     # Keep Meson's reported version aligned with pyproject.toml, which supplies
     # the distribution metadata used by meson-python.
-    version: '1.3.2',
+    version: '1.4.0',
     license: 'Apache-2.0',
     meson_version: '>=1.2.2',
     default_options: [

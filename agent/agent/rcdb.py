@@ -22,3 +22,30 @@ import rcdb as _package
 for _name in _package.__all__:
     globals()[_name] = getattr(_package, _name)
 del _name, _package
+
+import rcdb as _rcdb_package
+
+
+def register_backend(scheme, factory):
+    """Register an explicit RCDB provider for trusted in-process callers."""
+    from .record_access import register_store_scheme
+    register_store_scheme(scheme)
+    return _rcdb_package.register_backend(scheme, factory)
+
+
+def open_store(uri="memory://", **options):
+    """Open an Agent RCDB file or memory provider."""
+    from .record_access import check_store_uri, require_store
+    return require_store(_rcdb_package.open_store(check_store_uri(uri), **options))
+
+
+def default_store():
+    """Use RCDB's existing scoped default with Agent's provider admission."""
+    from .record_access import check_store_uri, require_store
+    check_store_uri(_rcdb_package.default_store_uri())
+    return require_store(_rcdb_package.default_store())
+
+
+def SQLStore(*args, **kwargs):
+    """Reject the removed SQL-backed Agent storage interface."""
+    raise ValueError("Agent uses RCDB file providers; use LocalStore or local://")

@@ -1,105 +1,42 @@
-"""Read SQL schemas and optionally cardinality weights into relational complexes.
-
-The connector uses SQLAlchemy introspection to construct table, column and
-relationship incidence without modifying the source database.
-"""
-
-from __future__ import annotations
-
-from typing import Any
-
-from . import BaseConnector, Capabilities, ConnectorError
-
-# SQLAlchemy URL schemes this one adapter covers (dialect = per vendor delta).
-_SQL_SCHEMES = (
-    "sqlite", "postgresql", "postgres", "mysql", "mariadb",
-    "oracle", "mssql",
-)
-
-
-def _redact(conn_str: str) -> str:
-    """Strip credentials from a connection string so it can go in an error message.
-
-    A SQLAlchemy URL carries them as `scheme://user:password@host/db`. Everything
-    between `//` and the last `@` is replaced, which covers passwords containing `@`
-    or `:`. Strings with no credentials are returned unchanged.
-    """
-    scheme, sep, rest = conn_str.partition("://")
-    if not sep or "@" not in rest:
-        return conn_str
-    _, _, tail = rest.rpartition("@")
-    return f"{scheme}://***@{tail}"
+"""Optional read-only SQL schema compatibility through the common SQL source."""
+from . import BaseConnector, Capabilities, ConnectorError as ConnectorError
+from agent.record_access import SQL_SCHEMES
 
 
 class SQLConnector(BaseConnector):
-    """Reflect a live SQL database into a relational complex."""
-
-    def __init__(self, with_weights: bool = False):
-        # Weights need live row counts; off by default keeps the connector
-        # pure structure. Advertised capabilities track this instance's config
-        # so what's advertised is exactly what's emitted.
+    def __init__(self, with_weights=False):
         self.with_weights = with_weights
 
-    def capabilities(self) -> Capabilities:
-        return Capabilities(
-            weights=self.with_weights,
-            modality=True,     # always derivable from the FK catalog
-            faces=True,        # co participation faces where junctions exist
-            schemes=_SQL_SCHEMES,
-        )
+    def capabilities(self):
+        return Capabilities(modality=True, faces=True, weights=self.with_weights,
+                            schemes=tuple(sorted(SQL_SCHEMES)))
 
-    def read(self, source: Any) -> tuple[Any, dict[str, Any]]:
-        conn_str = str(source)
-        from ..schema_complex import reflect_schema, schema_to_rex
-
-        model = reflect_schema(conn_str)
-        rex, sm_meta = schema_to_rex(model)
-        if rex is None:
-            raise ConnectorError(
-                "no foreign-key edges reflected - nothing to form a complex "
-                f"from (source={_redact(conn_str)})")
-
-        labels: list[str] = list(sm_meta["vertex_labels"])
-        edges: list[tuple[str, str]] = [tuple(e) for e in sm_meta["edges"]]
-        modality = self._modality(model, edges)
-        weights = self._weights(conn_str, edges) if self.with_weights else None
-
-        from ..secrets import mask_uri
-        return self.result(
-            rex,                       # already a faced RexGraph
-            vertex_labels=labels,
-            edges=edges,
-            source=mask_uri(conn_str),
-            modality=modality,
-            weights=weights,
-            extra={"dialect": conn_str.split(":", 1)[0]},
-        )
-
-    #### modality: align per edge with the emitted edge order
-    @staticmethod
-    def _modality(model, edges: list[tuple[str, str]]) -> list[dict[str, Any]]:
-        by_pair: dict[tuple[str, str], Any] = {}
-        for fk in model.foreign_keys:
-            by_pair.setdefault((fk.from_table, fk.to_table), fk)
-        out: list[dict[str, Any]] = []
-        for a, b in edges:
-            fk = by_pair.get((a, b))
-            out.append({
-                "nullable": bool(getattr(fk, "nullable", True)) if fk else True,
-                "identifying": bool(getattr(fk, "identifying", False)) if fk else False,
-                "on_delete": getattr(fk, "on_delete", "") if fk else "",
-            })
-        return out
-
-    #### weights: catalog row counts as a cardinality proxy
-    @staticmethod
-    def _weights(conn_str: str, edges: list[tuple[str, str]]) -> list[float] | None:
-        from ..schema_complex import list_tables
-        try:
-            counts = {t["table"]: float(t.get("rows") or 0)
-                      for t in list_tables(conn_str, with_counts=True)}
-        except Exception:
-            return None
-        # weight each FK edge by the child (many side) row count, the
-        # cardinality pressure the data puts on that relationship.
-        return [max(1.0, counts.get(a, 1.0)) for a, _ in edges]
+    def read(self, source):
+        from agent.sql_source import SQLSource, schema_model
+        from agent.schema_complex import schema_to_rex
+        from rexgraph import RexGraph
+        with (source if isinstance(source,SQLSource) else SQLSource(source)) as selected:
+            catalog = selected.catalog()
+            model = schema_model(catalog)
+            counts = None
+            if self.with_weights:
+                from agent.schema_complex import _row_count
+                counts = {info["table"]:_row_count(selected._connection,selected.engine,info["table"])
+                          for info in catalog}
+            weights = None if counts is None else {
+                f"{fk.from_table}->{fk.to_table}":counts[fk.from_table] for fk in model.foreign_keys}
+            graph, metadata = schema_to_rex(model,weights=weights)
+            if graph is None:
+                graph = RexGraph.from_cells([len(catalog)])
+                metadata = {"vertex_labels": [table["table"] for table in catalog], "edges": []}
+            metadata = {**metadata, "source": "sql-source", "sql_catalog": catalog,
+                        "sql_origin": selected.origin()}
+            metadata["modality"] = [{"from_columns": list(fk.from_cols),
+                "to_columns": list(fk.to_cols), "nullable": fk.nullable,
+                "identifying": fk.identifying, "on_delete": fk.on_delete}
+                for fk in model.foreign_keys if (fk.from_table,fk.to_table) in
+                    {tuple(edge) for edge in metadata.get("edges", [])}]
+            if counts is not None:
+                metadata["weights"] = [counts[a] for a,b in metadata.get("edges", [])]
+            graph.set_provenance(metadata)
+            return graph, metadata

@@ -99,8 +99,9 @@ The [API reference](REFERENCE.md) documents selectors, codec inventories,
 search restrictions and maintenance policies.
 
 RCBD bundles and RCBF streams are interchange containers, separate from an RCDB
-store layout. Import a supported RCBF snapshot with `rexgraph.io.load_rcbf`,
-then pass the graph to `put`; `save_rcbd` exports a complete supported graph.
+store layout. `rexgraph.io.save_rcbf` writes complete canonical state in version 6;
+`load_rcbf` reads it and retains support for older snapshot streams. Pass the
+loaded value to `put`. `save_rcbd` exports the same state as a directory bundle.
 Native C++ archives use their explicit bridge record adapters to retain the
 original archive bytes. Use `copy_record` for checked transfers between stores.
 
@@ -149,3 +150,16 @@ and [Agent transfer guide](../agent/RECORD_TRANSFER.md).
 
 From the repository root, run `make test-rcdb TEST_ARGS='-rs'` after installing
 a development profile. RCDB is distributed under the [Apache License 2.0](LICENSE).
+
+## Ontology records
+
+`ONTOLOGY_CODEC` stores an `OntologyState` through `put_record` and restores the
+complete typed snapshot, including its selected anchor and exact identity.
+Version reads and the existing `copy_record` boundary retain its complete bytes.
+`ontology.record()` is also an ordinary graph for existing graph-store workflows.
+
+New stores include this codec in their declared inventory. Opening an existing
+store preserves the inventory recorded in its header; it does not silently add
+ontology codec permission. Use a store that declares the codec or an explicit
+store migration before writing that record type. See the
+[Core ontology example](../rexgraph/README.md#ontology-snapshots).

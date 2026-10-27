@@ -1,166 +1,102 @@
-"""
-agent.server.routes.dbmanager: enterprise database manager.
-
-Save and test connections to any SQL database (or MongoDB), browse a live
-schema, and import it into the RCDB as a diagnosed relational complex.
-
-Security note: connection URIs may contain credentials. They are stored
-server side under the config dir and are always masked in responses. A
-production deployment should back this with a real secrets manager
-(Vault/KMS); the storage here is behind a single interface so that swap
-is a drop in.
-"""
-
-from __future__ import annotations
-
-from fastapi import APIRouter, Body, HTTPException
+"""RCDB record and RCQL execution views over the existing Agent tool boundary."""
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from agent.server.auth import TokenEntry, require_auth
 
 router = APIRouter(prefix="/v1/dbmanager")
 
-# Connection secrets live behind the SecretStore interface (file by default,
-# env reference / Vault as drop ins via REXGRAPH_SECRETS_URI). The per request view of
-# it is shared with routes/connectors.py, which resolves the same saved names.
+
+async def _call(request, token, name, arguments):
+    from .rex import call_tool
+    return await call_tool(request, {"name": name, "arguments": arguments}, token)
 
 
-def _secrets():
-    from agent.server.scope import secret_store
-    return secret_store()
+@router.get("/records")
+async def records(request: Request, limit: int = 100, offset: int = 0,
+                  token: TokenEntry = Depends(require_auth)):
+    return await _call(request, token, "rexgraph_rcdb_list", {"limit": limit, "offset": offset})
 
 
-def _mask(uri: str) -> str:
-    from agent.secrets import mask_uri
-    return mask_uri(uri)
+@router.post("/query")
+async def query(request: Request, body: dict = Body(...), token: TokenEntry = Depends(require_auth)):
+    return await _call(request, token, "rexgraph_rcql_query", body)
 
 
-def _resolve(body: dict) -> str:
-    """Get a concrete URI from a saved connection name or an inline uri."""
-    from agent.server.dbguard import check_db_uri
-    if body.get("name") and not body.get("uri"):
-        try:
-            uri = _secrets().get(body["name"])
-        except KeyError as exc:
-            raise HTTPException(404, f"No saved connection '{body['name']}'") from exc
-        check_db_uri(uri)
-        return uri
-    if body.get("uri"):
-        check_db_uri(body["uri"])
-        return body["uri"]
-    raise HTTPException(400, "Provide a saved connection 'name' or a 'uri'")
+@router.post("/inspect")
+async def inspect_record(request: Request, body: dict = Body(...), token: TokenEntry = Depends(require_auth)):
+    return await _call(request, token, "rexgraph_rcdb_inspect", body)
 
 
-@router.get("/connections")
-async def list_connections():
-    return {"connections": _secrets().list()}
-
-
-@router.post("/connections")
-async def save_connection(body: dict = Body(...)):
-    name = (body.get("name") or "").strip()
-    uri = (body.get("uri") or "").strip()
-    if not name or not uri:
-        raise HTTPException(400, "Provide 'name' and 'uri'")
-    from agent.server.dbguard import check_db_uri
-    check_db_uri(uri)
-    _secrets().put(name, uri, body.get("kind", "sql"))
-    return {"saved": name, "uri": _mask(uri)}
-
-
-@router.delete("/connections/{name}")
-async def delete_connection(name: str):
-    return {"deleted": _secrets().delete(name)}
-
-
-@router.post("/test")
-async def test_connection(body: dict = Body(...)):
-    uri = _resolve(body)
-    kind = body.get("kind", "sql")
-    try:
-        if kind == "mongo":
-            from pymongo import MongoClient
-            client = MongoClient(uri, serverSelectionTimeoutMS=4000)
-            try:
-                client.server_info()
-            finally:
-                client.close()
-        else:
-            from sqlalchemy import create_engine
-            # dispose, not just close: closing the checked out connection returns it to
-            # the pool, and the pool is what holds the socket. A probe route is called
-            # repeatedly from the UI, so leaving one behind per probe adds up.
-            engine = create_engine(uri)
-            try:
-                with engine.connect():
-                    pass
-            finally:
-                engine.dispose()
-        return {"ok": True, "uri": _mask(uri)}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:200], "uri": _mask(uri)}
-
-
-@router.post("/tables")
-async def list_tables(body: dict = Body(...)):
-    uri = _resolve(body)
-    try:
-        from agent import schema_complex as sc
-        if body.get("kind") == "mongo":
-            m = sc.reflect_mongo(uri, body.get("db") or "test",
-                                 sample=int(body.get("sample", 50)))
-            return {"tables": [{"table": t.name, "columns": len(t.columns),
-                                "foreign_keys": sum(1 for fk in m.foreign_keys
-                                                    if fk.from_table == t.name),
-                                "primary_key": t.primary_key} for t in m.tables]}
-        return {"tables": sc.list_tables(uri, with_counts=bool(body.get("counts", True)))}
-    except Exception as e:
-        raise HTTPException(400, f"Could not list tables: {e}") from e
+@router.post("/publish")
+async def publish(request: Request, body: dict = Body(...), token: TokenEntry = Depends(require_auth)):
+    return await _call(request, token, "rexgraph_rcdb_publish", body)
 
 
 @router.post("/import")
-async def import_schema(body: dict = Body(...)):
-    """Reflect a live schema, diagnose it, and store it in the RCDB."""
-    uri = _resolve(body)
-    try:
-        from agent import schema_complex as sc
-        if body.get("kind") == "mongo":
-            model = sc.reflect_mongo(uri, body.get("db") or "test",
-                                     sample=int(body.get("sample", 100)))
-        else:
-            model = sc.reflect_schema(uri)
-        report = sc.diagnose_schema(model)
-        store_id = body.get("store_id") or (body.get("name") or "imported") + "-schema"
-        rex, meta = sc.schema_to_rex(model)
-        if rex is not None:
-            from agent.rcdb import default_store as _store
-            _store().put(store_id, rex, meta=meta,
-                         tags=(body.get("tags") or []) + ["schema", "imported"])
-            report["stored_as"] = store_id
-        return report
-    except Exception as e:
-        raise HTTPException(400, f"Import failed: {e}") from e
+async def import_record(request: Request, body: dict = Body(...), token: TokenEntry = Depends(require_auth)):
+    return await _call(request, token, "rexgraph_rcdb_import_file", body)
+
+
+@router.get("/connections")
+async def connections(token: TokenEntry = Depends(require_auth)):
+    from agent.server.scope import secret_store
+    return {"connections":[{"name":row["name"],"kind":row.get("kind","sql")}
+                           for row in secret_store().list()],"provider":"rcdb"}
+
+
+@router.post("/connections")
+async def save_connection(body: dict = Body(...), token: TokenEntry = Depends(require_auth)):
+    from agent.server.scope import secret_store
+    from agent.server.dbguard import check_db_uri
+    from agent.record_access import SQL_SCHEMES
+    name,uri=body.get("name"),body.get("uri")
+    if not isinstance(name,str) or not name.strip() or not isinstance(uri,str):
+        raise HTTPException(400,"provide a connection name and SQL URI")
+    if uri.split(":",1)[0].split("+",1)[0].lower() not in SQL_SCHEMES:
+        raise HTTPException(400,"select a SQL source dialect")
+    check_db_uri(uri,allow_sql=True)
+    secret_store().put(name.strip(),uri,"sql")
+    return {"saved":name.strip(),"primary_store":"rcdb"}
+
+
+@router.delete("/connections/{name}")
+async def delete_connection(name: str, token: TokenEntry = Depends(require_auth)):
+    from agent.server.scope import secret_store
+    return {"deleted":secret_store().delete(name)}
+
+
+@router.post("/sql/catalog")
+@router.post("/tables")
+@router.post("/test")
+async def sql_catalog(request: Request, body: dict = Body(...), token: TokenEntry = Depends(require_auth)):
+    if "name" in body:body={**body,"connection":body["name"]};body.pop("name")
+    return await _call(request,token,"rexgraph_sql_catalog",body)
+
+
+@router.post("/sql/import")
+async def sql_import(request: Request, body: dict = Body(...), token: TokenEntry = Depends(require_auth)):
+    return await _call(request,token,"rexgraph_sql_import",body)
+
+
+@router.get("/sql/export")
+async def sql_export(record_id: str, format: str = "rcbd", version: int | None = None,
+                     token: TokenEntry = Depends(require_auth)):
+    from agent.server import artifacts
+    from agent.sql_source import SQLDataset
+    from agent.rcdb import default_store
+    dataset=SQLDataset(default_store(),record_id,version=version)
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(artifacts.download,lambda path:dataset.export(path,format=format),".sql-import","rcdb-import.zip")
 
 
 @router.post("/strain")
-async def connection_strain(body: dict = Body(...)):
-    """Measure data forced strain on a saved connection (reflect + pull live
-    cardinality + compute strain), keeping credentials server side."""
-    uri = _resolve(body)
-    try:
-        from agent import schema_complex as sc
-        model = sc.reflect_schema(uri)
-        weights, counts = sc.pull_cardinality_stats(uri, model, approximate=bool(body.get("approximate", False)))
-        result = sc.schema_strain(model, weights=weights)
-        result["row_counts"] = counts
-        return result
-    except Exception as e:
-        raise HTTPException(400, f"Strain analysis failed: {e}") from e
+async def removed_strain(body: dict = Body(...)):
+    raise HTTPException(410,"Use offline schema weights or import SQL data into RCDB")
 
 
 @router.post("/ddl")
 async def generate_ddl(body: dict = Body(...)):
-    """Generate cycle safe CREATE TABLE DDL from a JSON schema spec."""
+    """Render an offline schema declaration without executing it."""
     from agent import schema_complex as sc
-    spec = body.get("spec")
-    if not spec:
-        raise HTTPException(400, "Provide a 'spec'")
-    model = sc.parse_schema_json(spec)
-    return {"ddl": sc.export_schema_ddl(model, dialect=body.get("dialect", "generic"))}
+    if not body.get("spec"):
+        raise HTTPException(400, "Provide a schema spec")
+    return {"ddl": sc.export_schema_ddl(sc.parse_schema_json(body["spec"]))}

@@ -388,6 +388,19 @@ def member_type(parent, name, context):
             return RCType("IntegerSequenceView", kind=ValueKind.SEQUENCE,
                           domain=Domain.INTEGER, exactness=Exactness.INTEGER, source=parent.source)
         raise TypeError(f"StructuralDescription has no member {name!r}")
+    if parent.kind is ValueKind.RECORD and parent.name in {"Record", "RecordSignature"}:
+        if parent.name == "Record" and name == "signature":
+            return RCType("RecordSignature", kind=ValueKind.RECORD, domain=Domain.METADATA,
+                          exactness=Exactness.STRUCTURAL, source=parent.source, temporal=parent.temporal)
+        integer = {"version"} if parent.name == "Record" else {"nV", "nE", "nF", "betti1", "n_voids", "n_labels"}
+        text = {"id"} if parent.name == "Record" else {"source", "object_type"}
+        kind = (ValueKind.EXACT_INTEGER if name in integer else ValueKind.TEXT if name in text else
+                ValueKind.BOOLEAN if name == "chain_valid" else None)
+        if kind is not None:
+            return RCType("RecordMember", kind=kind,
+                          domain=Domain.INTEGER if kind is ValueKind.EXACT_INTEGER else Domain.METADATA,
+                          exactness=Exactness.INTEGER if kind is ValueKind.EXACT_INTEGER else Exactness.STRUCTURAL,
+                          source=parent.source, temporal=parent.temporal)
     # These signatures promise metadata records, not arbitrary live objects.
     # Key existence is data dependent; the plan must not execute the reader to
     # discover it. The runtime checks the Mapping protocol and actual key.

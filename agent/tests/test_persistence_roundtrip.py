@@ -170,12 +170,11 @@ def test_a_conversation_saves_its_structure(store):
     ex = SimpleNamespace(n_shared=4, n_exchange_edges=9, kappa_mean=0.31,
                          hodge_gradient=0.8, hodge_curl=0.15, hodge_harmonic=0.05)
     P.save_conversation(WS, "sess-1", [ex])
-    path = P._convs_dir(WS) / "sess-1.json"
-    assert path.exists(), "the conversation was not written"
-    rows = json.loads(path.read_text())
+    rows = P.load_conversation(WS, "sess-1")
     assert rows[0]["n_shared"] == 4
     assert rows[0]["kappa"] == pytest.approx(0.31)
     assert rows[0]["hodge"] == pytest.approx([0.8, 0.15, 0.05])
+
 
 
 #### export and stats

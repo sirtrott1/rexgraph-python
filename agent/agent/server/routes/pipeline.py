@@ -458,7 +458,7 @@ async def stream_pipeline(
             except Exception as exc:
                 yield _sse("error", {"error": f"Upload staging failed: {exc}"})
                 return
-            # Phase 1, ingest: OCR images and PDFs, identify direct files
+            # ingest: OCR images and PDFs, identify direct files
             import queue as thread_queue
             ingest_queue = thread_queue.Queue()
 
@@ -510,7 +510,7 @@ async def stream_pipeline(
                 yield 'event: done\ndata: {"documents":[]}\n\n'
                 return
 
-            # Phase 2: run compiled analysis in an isolated subprocess. The selected
+            # run compiled analysis in an isolated subprocess. The selected
             # context uses forkserver with preloaded analysis modules where available.
             ctx = _analysis_ctx()
             from agent.server.handles import config_dir

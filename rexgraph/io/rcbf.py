@@ -1,22 +1,13 @@
-"""Validated import of Relational Complex Binary Files (``.rcbf``).
+"""Sequential RCBF containers for complete canonical static and temporal state.
 
-RCBF and RCBD are sibling containers for relational complex data.  RCBF is a
-sequential binary stream; RCBD is RexGraph's addressable
-directory container.  This module maps only carriers that RexGraph can
-represent without changing their mathematical meaning:
-
-* C0 labels and primary C1 boundary supports;
-* C1 weights, signs, and named metadata;
-* C2 boundaries whose coefficients and chain condition are exact.
-
-It deliberately does not import derived numeric products or temporal
-state records.  They are not a shared canonical carrier, and silently
-reconstructing them with a different engine would be less rigorous than an
-explicit bridge.  A stream with temporal records therefore refuses by default;
-an explicit current snapshot opt in is available when that loss is intended.
+Version 6 stores the common state header and named tensors with bounded framing
+and a complete stream digest. Versions 4 and 5 retain their checked C0--C2 import
+contract, including explicit selection of a current snapshot from temporal tails.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import struct
 from fractions import Fraction
 from pathlib import Path
@@ -24,13 +15,19 @@ from typing import BinaryIO
 
 import numpy as np
 
-__all__ = ["RCBFFormatError", "is_rcbf_file", "load_rcbf"]
+__all__ = ["RCBFFormatError", "is_rcbf_file", "load_rcbf", "save_rcbf"]
 
 
 MAGIC = b"RCBF\0\0\0\0"
 LEGACY_MAGIC = b"REXFILE\0"
 _HEADER = struct.Struct("<7IQ")
 _SUPPORTED_VERSIONS = frozenset({4, 5})
+_STATE_VERSION = 6
+_STATE_HEADER = struct.Struct("<IIQQ")
+_STATE_ENTRY = struct.Struct("<QQ")
+_MAX_STATE_HEADER = 16 * 1024 * 1024
+_MAX_STATE_TENSORS = 100_000
+_DEFAULT_MAX_BYTES = 1024 * 1024 * 1024
 _MAX_NAME_BYTES = 1024 * 1024
 _MAX_CELLS = 10_000_000
 _MAX_SIGNALS = 100_000
@@ -48,6 +45,131 @@ _FLAG_ATTR_KIND = 0x10
 
 class RCBFFormatError(ValueError):
     """The stream is malformed or cannot be represented as a RexGraph exactly."""
+
+
+def _byte_limit(max_bytes):
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("RCBF max_bytes must be a positive integer")
+    return max_bytes
+
+
+def save_rcbf(path, obj, *, max_bytes=_DEFAULT_MAX_BYTES):
+    """Atomically write complete canonical state as an RCBF version 6 stream.
+
+    The byte budget includes framing and the checksum. Tensors are encoded and
+    written individually using the existing closed native value codec. Optional
+    derived caches are not calculated or serialized by this container.
+    """
+    from rexgraph.graph import RexGraph, TemporalRex
+    from .publication import staged_publication
+
+    max_bytes = _byte_limit(max_bytes)
+    if isinstance(obj, TemporalRex):
+        from rexgraph.temporal_state import to_temporal_state
+        state = to_temporal_state(obj)
+    elif isinstance(obj, RexGraph):
+        from rexgraph.state import to_state
+        state = to_state(obj)
+    else:
+        raise TypeError("RCBF requires RexGraph or TemporalRex")
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with staged_publication(target) as staged, staged.open("wb") as handle:
+        _write_state_stream(handle, state, max_bytes=max_bytes)
+    return target
+
+
+def _write_state_stream(handle, state, *, max_bytes=_DEFAULT_MAX_BYTES):
+    """Write canonical complete state; containers share this exact wire codec."""
+    from rexgraph.value_codec import pack_value
+    max_bytes = _byte_limit(max_bytes)
+    header = pack_value(state.header)
+    names = sorted(state.tensors)
+    if len(header) > _MAX_STATE_HEADER or len(names) > _MAX_STATE_TENSORS:
+        raise ValueError("RCBF state header or tensor count exceeds its limit")
+    digest = hashlib.sha256()
+    written = 0
+
+    def put(data):
+        nonlocal written
+        if written + len(data) + digest.digest_size > max_bytes:
+            raise ValueError("RCBF state exceeds max_bytes")
+        handle.write(data)
+        digest.update(data)
+        written += len(data)
+
+    put(MAGIC)
+    put(_STATE_HEADER.pack(_STATE_VERSION, 0, len(header), len(names)))
+    put(header)
+    for name in names:
+        encoded = name.encode("utf-8")
+        if not encoded or len(encoded) > _MAX_NAME_BYTES:
+            raise ValueError("RCBF tensor name exceeds its limit")
+        payload = pack_value(state.tensors[name])
+        put(_STATE_ENTRY.pack(len(encoded), len(payload)))
+        put(encoded)
+        put(payload)
+    handle.write(digest.digest())
+
+
+def _load_state_stream(handle, *, max_bytes):
+    from rexgraph.value_codec import unpack_value
+
+    handle.seek(0, 2)
+    size = handle.tell()
+    if size > _byte_limit(max_bytes):
+        raise RCBFFormatError("RCBF state exceeds max_bytes")
+    end = size - hashlib.sha256().digest_size
+    handle.seek(0)
+    digest = hashlib.sha256()
+
+    def take(count):
+        if count < 0 or handle.tell() + count > end:
+            raise RCBFFormatError("truncated RCBF state frame")
+        value = _read_exact(handle, count, section="state frame")
+        digest.update(value)
+        return value
+
+    try:
+        if take(8) != MAGIC:
+            raise RCBFFormatError("RCBF version 6 requires the RCBF magic")
+        version, flags, header_size, count = _STATE_HEADER.unpack(take(_STATE_HEADER.size))
+        if version != _STATE_VERSION or flags != 0:
+            raise RCBFFormatError("unsupported RCBF state version or flags")
+        if header_size > _MAX_STATE_HEADER or count > _MAX_STATE_TENSORS:
+            raise RCBFFormatError("RCBF state header or tensor count exceeds its limit")
+        header = unpack_value(take(header_size))
+        if type(header) is not dict:
+            raise RCBFFormatError("RCBF state header must be a mapping")
+        tensors = {}
+        previous = None
+        for _ in range(count):
+            name_size, value_size = _STATE_ENTRY.unpack(take(_STATE_ENTRY.size))
+            if not 0 < name_size <= _MAX_NAME_BYTES:
+                raise RCBFFormatError("RCBF tensor name exceeds its limit")
+            name = take(name_size).decode("utf-8")
+            if previous is not None and name <= previous:
+                raise RCBFFormatError("RCBF tensor names must be distinct and ordered")
+            value = unpack_value(take(value_size))
+            if not isinstance(value, np.ndarray) or value.dtype.hasobject:
+                raise RCBFFormatError("RCBF state tensors require closed numeric or string arrays")
+            tensors[name] = value
+            previous = name
+        if handle.tell() != end:
+            raise RCBFFormatError("RCBF state has unclaimed trailing data")
+        if not hmac.compare_digest(digest.digest(), _read_exact(handle, 32, section="checksum")):
+            raise RCBFFormatError("RCBF stream checksum differs")
+        if header.get("object_type") == "TemporalRex":
+            from rexgraph.temporal_state import TemporalState, from_temporal_state
+            return from_temporal_state(TemporalState(tensors, header))
+        if header.get("object_type") != "RexGraph":
+            raise RCBFFormatError("unsupported RCBF state object type")
+        from rexgraph.state import RexState, from_state
+        return from_state(RexState(tensors, header))
+    except (ValueError, TypeError, UnicodeError, OverflowError) as exc:
+        if isinstance(exc, RCBFFormatError):
+            raise
+        raise RCBFFormatError(f"invalid RCBF canonical state: {exc}") from exc
 
 
 def _read_exact(handle: BinaryIO, size: int, *, section: str) -> bytes:
@@ -301,10 +423,12 @@ def is_rcbf_file(path: str | Path) -> bool:
         return False
 
 
-def load_rcbf(path: str | Path, *, allow_current_snapshot: bool = False):
-    """Import an exact C0--C2 RCBF carrier as a :class:`~rexgraph.graph.RexGraph`.
+def load_rcbf(path: str | Path, *, allow_current_snapshot: bool = False,
+              max_bytes: int = _DEFAULT_MAX_BYTES):
+    """Read complete version 6 state or a supported legacy C0--C2 snapshot.
 
-    The stream must use version 4 or 5, homogeneous C1 directedness, finite C1
+    Version 6 uses the common static/temporal state decoder and a total byte
+    budget. Legacy versions 4 and 5 require homogeneous C1 directedness, finite C1
     weights, and integral C2 coefficients that satisfy the chain condition over
     the rationals. Signals are preserved as metadata and harmonic data is not
     treated as a shared canonical carrier. A stream with stored temporal states
@@ -316,6 +440,10 @@ def load_rcbf(path: str | Path, *, allow_current_snapshot: bool = False):
         magic = _read_exact(handle, 8, section="magic")
         if magic not in {MAGIC, LEGACY_MAGIC}:
             raise RCBFFormatError("not an RCBF stream (unknown magic)")
+        version = struct.unpack("<I", _read_exact(handle, 4, section="version"))[0]
+        if version == _STATE_VERSION:
+            return _load_state_stream(handle, max_bytes=max_bytes)
+        handle.seek(8)
         version, flags, n_vertices, n_edges, n_faces, n_signals, harmonic_dim, _reserved = (
             _HEADER.unpack(_read_exact(handle, _HEADER.size, section="header"))
         )

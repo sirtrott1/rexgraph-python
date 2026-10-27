@@ -84,6 +84,8 @@ def _plain_type(value: RCType) -> dict[str, object]:
 
     if value.tensor_axes is not None:
         result["tensor_axes"] = [asdict(axis) for axis in value.tensor_axes]
+    if value.layer_profile is not None:
+        result["layer_profile"] = value.layer_profile
     if value.program_outputs is not None:
         result["program_outputs"] = [_plain_type(output) for output in value.program_outputs]
     if value.coordinate_action is not None:
@@ -172,6 +174,18 @@ def _carrier_literal(binding: Binding, value: object) -> RCType | tuple | None:
     treating them as opaque Python objects, or ordinary execution would bypass
     the same source/basis checks that protect nested phrase results.
     """
+    from .ontology_contracts import literal_type as ontology_literal
+    ontology_type = ontology_literal(binding, value)
+    if ontology_type is not None:
+        return ontology_type
+    from .c_workflow_contracts import literal_type as c_literal
+    declared_c = c_literal(binding, value)
+    if declared_c is not None:
+        return declared_c
+    from .layer_contracts import literal_type as layer_literal
+    declared_layer = layer_literal(binding, value)
+    if declared_layer is not None:
+        return declared_layer
     from .transformation_contracts import literal_type as transformation_literal
     transformation = transformation_literal(value)
     if transformation is not None:

@@ -54,6 +54,8 @@ def test_nested_recipe_selects_native_semantic_state():
 
 @pytest.mark.parametrize('backend',['memory','rex','file','sql'])
 def test_store_reopen_and_query(backend,tmp_path):
+    if backend == "sql":
+        pytest.importorskip("sqlalchemy", reason="standalone RCDB SQL provider is optional")
     c,f=native()
     record=RexGraph.from_hypergraph([0,1],[0]);record.attach_metadata(1,0,'recipe',c.recipe);record.attach_metadata(1,0,'family',f)
     uri={'memory':'memory://','rex':str(tmp_path/'history.rexdb'),'file':'file://'+str(tmp_path/'files'),

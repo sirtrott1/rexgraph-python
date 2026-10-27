@@ -24,23 +24,24 @@ def test_hypergraph_export_keeps_isolated_nodes_and_participant_order(sink, tmp_
         store.save_complex_rex(bundle, tmp_path / "g.rcbd")
         graph = store.rio.load_rcbd(tmp_path / "g.rcbd")
     else:
-        uri = f"sqlite:///{tmp_path / 'catalog.db'}"
+        uri = f"local://{tmp_path / 'catalog.db'}"
         store.to_rcdb(bundle, uri, name="g")
         graph = open_store(uri).get("g")
     assert graph.nV == 4
     assert graph.boundary_idx.tolist() == [1, 0]
 
 
-def test_sql_model_loader_reads_beyond_first_batch(tmp_path):
-    sa = pytest.importorskip("sqlalchemy")
+def test_rcdb_model_loader_retains_the_complete_feature_record(tmp_path):
+    from contextlib import closing
     from agent.models import store
-    uri = f"sqlite:///{tmp_path / 'training.db'}"
-    engine = store.rio.get_engine(uri)
-    with engine.begin() as conn:
-        conn.execute(sa.text("CREATE TABLE samples (feature REAL, label INTEGER)"))
-        conn.execute(sa.text("INSERT INTO samples VALUES (:feature, :label)"),
-                     [{"feature": float(i), "label": i % 2} for i in range(100005)])
-    bundle = store.load_bundle(uri, table="samples")
+    from agent.rcdb import LocalStore
+    from agent.relational import RelationalSession
+    from rcql import Result
+    X = np.arange(100005, dtype=np.float64).reshape(-1, 1)
+    y = np.arange(100005, dtype=np.int64) % 2
+    with closing(LocalStore(str(tmp_path / "training"))) as records:
+        RelationalSession(records).save_result("samples", Result(({"X": X, "y": y},)), expected_version=0)
+        bundle = store.load_bundle(records, record_id="samples", version=1)
     assert bundle.X.shape == (100005, 1)
     assert bundle.y.shape == (100005,)
     assert bundle.X[-1, 0] == 100004

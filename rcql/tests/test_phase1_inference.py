@@ -602,12 +602,16 @@ def test_declared_dependencies_match_what_the_package_actually_imports():
     }
     # rcdb is an optional extra and is imported inside functions, never at module scope
     third_party.discard("rcdb")
-    assert "rexgraph_cpp" not in imported_at_module_scope
-    if "rexgraph_cpp" in third_party:
-        optional_native = meta["optional-dependencies"]["native"]
-        assert any(re.split(r"[<>=!\[ ]", spec, maxsplit=1)[0] == "rexgraph-cpp-bindings"
-                   for spec in optional_native)
-        third_party.remove("rexgraph_cpp")
+    for module, extra, distribution in (
+        ("rexgraph_cpp", "native", "rexgraph-cpp-bindings"),
+        ("rexgraph_temporal", "temporal", "rexgraph-temporal-bindings"),
+    ):
+        assert module not in imported_at_module_scope
+        if module in third_party:
+            optional_native = meta["optional-dependencies"][extra]
+            assert any(re.split(r"[<>=!\[ ]", spec, maxsplit=1)[0] == distribution
+                       for spec in optional_native)
+            third_party.remove(module)
 
     assert third_party == declared, {
         "imported but not declared": sorted(third_party - declared),

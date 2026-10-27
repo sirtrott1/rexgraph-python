@@ -93,11 +93,11 @@ def bench_backend(kind: str, n: int, root: str) -> dict[str, Any]:
             return rcdb.MemoryStore()
         if kind == "file":
             return rcdb.FileStore(root, read_only=False)
-        if kind == "sqlite":
-            return rcdb.SQLStore(f"sqlite:///{root}/rc.sqlite")
         if kind == "local":
             return rcdb.LocalStore(root)
-        return rcdb.open_store(f"rex://{root}", read_only=False)
+        if kind == "rex":
+            return rcdb.open_store(f"rex://{root}", read_only=False)
+        raise ValueError("select memory, local, file or rex")
 
     payload = _payload(n, seed=2)
     store = _open()
@@ -138,7 +138,7 @@ def bench_backend(kind: str, n: int, root: str) -> dict[str, Any]:
 
 
 def bench_analytics(n: int = 2000) -> dict[str, Any] | None:
-    """The queries no store can answer, if duckdb is installed."""
+    """Measure RCQL selection and counts over native record metadata."""
     from agent import rcdb
     try:
         from agent import analytics
@@ -156,16 +156,15 @@ def bench_analytics(n: int = 2000) -> dict[str, Any] | None:
     return {
         "records": n,
         "build_ms": _median_ms(view.refresh, 3),
-        "filter_ms": _median_ms(lambda: view.ids("nE >= 12"), 20),
+        "filter_ms": _median_ms(lambda: view.ids({"min_nE": 12}), 20),
         "aggregate_ms": _median_ms(
-            lambda: view.sql("SELECT source, count(*), avg(kappa_mean) "
-                             "FROM signatures GROUP BY source"), 20),
+            lambda: view.query("FROM $db RETURN COUNT(RCDB_SELECT())"), 20),
         "store_same_filter_ms": _median_ms(
             lambda: store.query(min_nE=12, limit=10 ** 9), 5),
     }
 
 
-def run(n: int = 2000, backends=("local", "sqlite", "memory")) -> dict[str, Any]:
+def run(n: int = 2000, backends=("local", "memory")) -> dict[str, Any]:
     from rexgraph import hardware
 
     report: dict[str, Any] = {

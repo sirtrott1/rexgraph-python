@@ -1,7 +1,7 @@
 """Relational Complex Query Language."""
 #: Kept here rather than read back from installed metadata, so a source checkout reports
 #: what it is. pyproject.toml has to match; a test enforces it.
-__version__ = "1.3.2"
+__version__ = "1.4.0"
 
 def register_result_storage_codec():
     """Install native RCDB result storage only when explicitly requested."""
@@ -71,6 +71,7 @@ from .inventory import operator_inventory
 from .mutation_plan import MutationPlan, plan_mutation
 from .native_plan import NativeNode, NativePlan
 from .parser import parse
+from .formatting import format_query
 from .planning import PlannedExpression, QueryPlan, plan_query
 from .signatures import OperatorSignature, TypePattern, catalogued, lookup
 from .types import (
@@ -99,7 +100,7 @@ from .types import (
 # require the machinery that would produce it. The executor stays lazy for that reason.
 __all__ = [
     "run", "dataset", "DatasetSource", "SourceSignature", "SourceRegistry", "SOURCES",
-    "register_result_storage_codec",
+    "register_result_storage_codec", "format_query",
     "ArtifactServices",
     "Comparison", "MatchBinding", "StructuralEdit",
     "Alias", "ListExpr", "Member", "alias", "member", "source_call",
@@ -200,3 +201,16 @@ _RELATION_EXPORTS = {
 }
 _PROGRAM_EXPORTS.update(_RELATION_EXPORTS)
 __all__ += list(_RELATION_EXPORTS)
+
+_LAYER_EXPORTS = {name: ("layer_product", name) for name in
+                  ("Layer", "LayerInterface", "LayerProduct", "LayerSolution", "LayerOperator", "LayerReadout")}
+_LAYER_EXPORTS["TemporalModel"] = ("native_temporal", "TemporalModel")
+_PROGRAM_EXPORTS.update(_LAYER_EXPORTS)
+__all__ += list(_LAYER_EXPORTS)
+
+_C_EXPORTS={name:("c_workflow",name) for name in ("CWorkflow","CValue","CInterface")}
+_PROGRAM_EXPORTS.update(_C_EXPORTS)
+__all__ += list(_C_EXPORTS)
+
+_PROGRAM_EXPORTS['DemandProgram']=('demand_gluing','DemandProgram')
+__all__.append('DemandProgram')

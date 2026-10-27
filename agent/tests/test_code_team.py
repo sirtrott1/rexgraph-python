@@ -28,7 +28,8 @@ def test_build_unifies_passing_pieces_and_grows_evaluators():
     assert r["integration"]["passed"] == 3
     assert all(p["verdict"]["ok"] for p in r["pieces"])
     # the team grew the review + test roles up front
-    assert team.hive.get("reviewer") is not None and team.hive.get("tester") is not None
+    assert team.hive.get("reviewer") is None and team.hive.get("tester") is None
+    assert {row.get("unmet") for row in r["reactions"]} >= {"review", "test"}
 
 
 def test_failing_piece_self_heals_with_a_debugger():
@@ -40,7 +41,8 @@ def test_failing_piece_self_heals_with_a_debugger():
     r = team.build(tasks)
     assert r["committed"] is True                        # the retry fixed it
     assert r["pieces"][0]["retried"] is True
-    assert team.hive.get("debugger") is not None         # reactive layer deployed a debugger
+    assert team.hive.get("debugger") is None
+    assert any(row.get("unmet") == "debug" for row in r["reactions"])         # reactive layer deployed a debugger
 
 
 def test_generation_and_evaluation_overlap():

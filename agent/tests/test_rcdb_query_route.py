@@ -13,7 +13,7 @@ QUERY = "/api/v1/db/query"
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "rcdb.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "rcdb.sqlite"))
     import agent.server.routes.rcdb as rcdbroute
     rcdbroute._STORE = None
     from agent.server.app import app

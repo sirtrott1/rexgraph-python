@@ -472,6 +472,9 @@ def auto_rex(
             accepts = {"k"}
         reader_kwargs = {k: v for k, v in kwargs.items() if k in accepts}
         out = read(data, **reader_kwargs)
+        from rexgraph.graph import RexGraph
+        if isinstance(out, RexGraph):
+            return out
         if name in ("h5ad", "loom"):
             # a matrix and its axis labels: exactly what the feature path already
             # takes, so it goes there rather than growing a second one.

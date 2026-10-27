@@ -34,7 +34,7 @@ def _put(store, rid, labels=None):
                      meta={"doc_id": rid, "vertex_labels": labels})
 
 
-ALL = ["memory", "file", "sql", "rex"]
+ALL = ['memory', 'file', 'local', 'rex']
 
 
 def _open(kind, tmp_path, tag=""):
@@ -42,8 +42,8 @@ def _open(kind, tmp_path, tag=""):
         return rcdb.MemoryStore()
     if kind == "file":
         return rcdb.FileStore(str(tmp_path / f"fs{tag}"), read_only=False)
-    if kind == "sql":
-        return rcdb.SQLStore(f"sqlite:///{tmp_path / f'rc{tag}.sqlite'}")
+    if kind == "local":
+        return rcdb.LocalStore(str(f"local://{tmp_path / f'rc{tag}.sqlite'}").removeprefix("local://"))
     return rcdb.open_store(f"rex://{tmp_path / f'rx{tag}'}", read_only=False)
 
 
@@ -202,8 +202,7 @@ def test_auto_recognises_an_existing_rexstore(tmp_path):
 def test_recommend_backend_explains_itself():
     rec = rcdb.recommend_backend()
     assert "backend" in rec and "reason" in rec and rec["reason"]
-    assert rec["backend"] in rcdb.available_backends() or rec["backend"] in (
-        "rex", "file", "memory", "sql")
+    assert rec["backend"] in rcdb.available_backends() or rec["backend"] in ('rex', 'file', 'memory', 'local')
 
 
 # object storage

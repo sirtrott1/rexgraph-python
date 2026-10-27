@@ -21,16 +21,41 @@ from . import data as D
 
 # load: any rexgraph.io source -> a DataBundle
 
-def load_bundle(source, *, y_col="label", x_cols=None, table=None, limit=None,
+def load_bundle(source, *, y_col="label", x_cols=None, table=None, record_id=None, version=None, output=None, limit=None,
                 task="classification") -> D.DataBundle:
     """Load training data from any rexgraph.io-supported source into a DataBundle.
       .parquet          -> vector bundle (feature columns + `y_col`)
       .safetensors      -> vector corpus written by save_vectors, or an embedding corpus
       .rcbd              -> relational complex (hypergraph bundle for hgnn)
-      sqlalchemy URI    -> pass `table=`; reads a numeric table
+      RCDB records      -> pass a selected record value to a declared model adapter
       .csv/.jsonl/.npz  -> table;  .txt -> byte sequence (for lm)
     """
+    if hasattr(source, "read_record"):
+        from agent.relational import RelationalSession
+        from rcql import Result
+        from rexgraph import RexGraph
+        selected = record_id if record_id is not None else table
+        if not isinstance(selected, str) or not selected:
+            raise ValueError("RCDB model input requires an explicit record_id")
+        snapshot = RelationalSession(source).read(selected, version)
+        value = snapshot.value
+        if isinstance(value, Result):
+            index = 0 if output is None and len(value.values) == 1 else output
+            if type(index) is not int or not 0 <= index < len(value.values):
+                raise ValueError("model input requires an explicit existing result output")
+            value = value.values[index]
+        if isinstance(value, RexGraph):
+            bundle = _bundle_from_rex(value)
+        elif isinstance(value, dict) and "X" in value and "y" in value:
+            bundle = D._vector_bundle(np.asarray(value["X"]), np.asarray(value["y"]), task=task)
+        else:
+            raise TypeError("feature archetypes require a declared graph or X/y record; use native providers for whole fields")
+        bundle.meta["source_record"] = {"record_id": snapshot.record.id,
+            "version": snapshot.record.version, "state_digest": snapshot.state_digest}
+        return bundle
     s = str(source)
+    if "://" in s:
+        raise ValueError("model inputs require selected RCDB records or local files")
     if s.endswith(".parquet"):
         cols = rio.read_parquet(s, columns=(list(x_cols) + [y_col]) if x_cols else None)
         y = cols.pop(y_col)
@@ -41,26 +66,9 @@ def load_bundle(source, *, y_col="label", x_cols=None, table=None, limit=None,
         X, labels, feat_names, meta = rio.load_vectors(s)
         return D._vector_bundle(np.asarray(X, "float32"), labels, task=task)
     if s.endswith(BUNDLE_SUFFIXES):
-        return _bundle_from_rex(rio.load_rcbd(s))
-    if table is not None:                                   # a database URI + table
-        eng = rio.get_engine(s)
-        # The ENGINE is cached for the life of the process, which is what makes asking
-        # for one per load correct. A checked out CONNECTION is not: it has to go back
-        # to the pool when this read is done, or every load holds one open.
-        def read(conn):
-            batches = list(rio.read_sql_batches(conn, table))
-            if not batches:
-                raise ValueError("model training table is empty")
-            return {key: np.concatenate([batch[key] for batch in batches]) for key in batches[0]}
-        if hasattr(eng, "connect"):
-            with eng.connect() as conn:
-                rows = read(conn)
-        else:
-            rows = read(eng)
-        y = rows.pop(y_col)
-        keys = x_cols or list(rows)
-        X = np.stack([np.asarray(rows[k], "float32") for k in keys], axis=1)
-        return D._vector_bundle(X, y, task=task)
+        return _bundle_from_rex(rio.load(s))
+    if "://" in s or table is not None:
+        raise ValueError("Agent model data must come from RCDB records or local files, not SQL connections")
     if s.endswith(".txt"):
         return D.load_text(s, limit=limit)
     return D.load_table(s, x_cols=x_cols, y_col=y_col, limit=limit, task=task)

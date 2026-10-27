@@ -84,7 +84,7 @@ def test_filestore_versions_and_legacy_read(tmp_path):
 
 def test_sqlstore_append_only_and_migration(tmp_path):
     from agent.rcdb import open_store
-    uri = f"sqlite:///{tmp_path}/rc.db"
+    uri = f"local://{tmp_path}/rc.db"
     st = open_store(uri, **({"read_only": False} if "://" not in uri or uri.startswith(("file://", "rex://")) else {}))
     st.put("g", _rex(3)); st.put("g", _rex(6))
     assert [r.version for r in st.history("g")] == [1, 2]
@@ -98,7 +98,7 @@ def test_sqlstore_append_only_and_migration(tmp_path):
     st2.close()
 
 
-@pytest.mark.parametrize("uri_factory", ["memory", "file", "sql"])
+@pytest.mark.parametrize("uri_factory", ['memory', 'file', 'local'])
 def test_change_feed_emitted(tmp_path, uri_factory):
     """put/delete must emit rcdb.put/rcdb.delete events on the shared activity journal,
     for every backend. Each parametrization uses its own id so events from other tests
@@ -109,7 +109,7 @@ def test_change_feed_emitted(tmp_path, uri_factory):
     from agent import activity
     id_ = "cf_" + uri_factory
     uri = {"memory": "memory://", "file": f"file://{tmp_path}/db",
-           "sql": f"sqlite:///{tmp_path}/rc.db"}[uri_factory]
+           "local": f"local://{tmp_path}/rc.db"}[uri_factory]
     log = activity.get_log()
     st = open_store(uri, **({"read_only": False} if "://" not in uri or uri.startswith(("file://", "rex://")) else {}))
     st.put(id_, _rex(3))
@@ -151,33 +151,14 @@ def test_put_temporal_rex_payload():
     assert rec.signature.get("object_type") == "TemporalRex" and rec.signature.get("T") == 2
 
 
-def test_sqlstore_legacy_idonly_pk_upgrades_and_versions(tmp_path):
-    import sqlalchemy as sa
-    from agent.rcdb import open_store, serialize_complex
-    dbfile = tmp_path / "legacy.db"
-    uri = f"sqlite:///{dbfile}"
-    # hand build a pre Slice C table: PRIMARY KEY (id) only, no temporal columns, one row
-    eng = sa.create_engine(uri)
-    with eng.begin() as c:
-        c.exec_driver_sql("CREATE TABLE rc_complexes (id TEXT PRIMARY KEY, signature TEXT, "
-                          "meta TEXT, created FLOAT, blob BLOB, nV INTEGER, nE INTEGER, "
-                          "betti1 INTEGER, kappa_mean FLOAT, chain_valid BOOLEAN, source VARCHAR(256))")
-        blob = serialize_complex(_rex(3))
-        c.exec_driver_sql("INSERT INTO rc_complexes (id, signature, meta, created, blob, nV, nE) "
-                          "VALUES ('leg', '{}', '{}', 100.0, :b, 4, 3)", {"b": blob})
-    eng.dispose()
-    # open through SQLStore: migration must repair the PK to composite (id, version)
-    st = open_store(uri, **({"read_only": False} if "://" not in uri or uri.startswith(("file://", "rex://")) else {}))
-    assert st.get("leg").nE == 3                          # legacy row reads as version 1
-    st.put("leg", _rex(6))                                # UPDATE the existing id, version 2 (was crashing)
-    assert [r.version for r in st.history("leg")] == [1, 2]
-    assert st.get("leg").nE == 6
-    st.close()
-    # reopen: PK already composite, migration is a no op, data intact
-    st2 = open_store(uri, **({"read_only": False} if "://" not in uri or uri.startswith(("file://", "rex://")) else {}))
-    assert st2.get("leg").nE == 6
-    assert [r.version for r in st2.history("leg")] == [1, 2]
-    st2.close()
+def test_sql_provider_is_refused_before_opening_a_legacy_file(tmp_path):
+    from agent.rcdb import open_store
+    legacy = tmp_path / "legacy.db"
+    legacy.write_bytes(b"SQLite format 3\x00original data")
+    original = legacy.read_bytes()
+    with pytest.raises(ValueError, match="SQL"):
+        open_store("sqlite:///" + str(legacy))
+    assert legacy.read_bytes() == original
 
 
 def test_trajectory_reports_signed_movement():
@@ -219,12 +200,12 @@ def _open(backend, tmp_path, name="db"):
         return open_store("memory://")
     if backend == "file":
         return open_store(f"file://{tmp_path}/{name}", read_only=False)
-    if backend == "sql":
-        return open_store(f"sqlite:///{tmp_path}/{name}.db")
+    if backend == "local":
+        return open_store(f"local://{tmp_path}/{name}.db")
     raise ValueError(backend)
 
 
-_ALL_BACKENDS = ["memory", "file", "sql"]
+_ALL_BACKENDS = ['memory', 'file', 'local']
 
 
 @pytest.mark.parametrize("backend", _ALL_BACKENDS)
@@ -278,7 +259,7 @@ def test_legacy_read_backfills_to_version_1_all_backends(backend, tmp_path):
     reads back as version 1 on every backend."""
     import json
 
-    from agent.rcdb import ComplexRecord, FileStore, MemoryStore, open_store, serialize_complex
+    from agent.rcdb import ComplexRecord, FileStore, MemoryStore, serialize_complex
     rex = _rex(3)
     legacy_sig = {"nV": 4, "nE": 3}
     if backend == "memory":
@@ -297,21 +278,18 @@ def test_legacy_read_backfills_to_version_1_all_backends(backend, tmp_path):
             json.dump({"old": legacy}, f)
         st = FileStore(root, read_only=False)
     else:
-        import sqlalchemy as sa
-        dbfile = tmp_path / "legacy.db"
-        uri = f"sqlite:///{dbfile}"
-        eng = sa.create_engine(uri)
-        with eng.begin() as c:
-            c.exec_driver_sql(
-                "CREATE TABLE rc_complexes (id TEXT PRIMARY KEY, signature TEXT, "
-                "meta TEXT, created FLOAT, blob BLOB, nV INTEGER, nE INTEGER, "
-                "betti1 INTEGER, kappa_mean FLOAT, chain_valid BOOLEAN, source VARCHAR(256))")
-            blob = serialize_complex(rex)
-            c.exec_driver_sql(
-                "INSERT INTO rc_complexes (id, signature, meta, created, blob, nV, nE) "
-                "VALUES ('old', '{}', '{}', 50.0, :b, 4, 3)", {"b": blob})
-        eng.dispose()
-        st = open_store(uri, **({"read_only": False} if "://" not in uri or uri.startswith(("file://", "rex://")) else {}))
+        # Legacy FileStore data requires an explicit conversion to the journal format.
+        from agent.rcdb import LocalStore
+        root = tmp_path / "legacy-local"
+        (root / "blobs").mkdir(parents=True)
+        payload = serialize_complex(rex)
+        (root / "blobs" / "old.safetensors").write_bytes(payload)
+        (root / "index.json").write_text(json.dumps({"old": {
+            "id": "old", "signature": legacy_sig, "created": 50.0, "meta": {}}}))
+        with pytest.raises(ValueError, match="migration"):
+            LocalStore(str(root))
+        assert (root / "blobs" / "old.safetensors").read_bytes() == payload
+        return
     hist = st.history("old")
     assert len(hist) == 1 and hist[0].version == 1
     assert hist[0].tx_to is None

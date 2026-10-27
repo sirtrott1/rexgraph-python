@@ -222,44 +222,18 @@ class RexStateGraph:
 
         return result
 
-    def should_continue(self, harmonic_threshold: float = 0.4) -> dict:
-        """Should the agent continue executing?
-
-        If the execution path is harmonic dominated (stuck in topological
-        loops that can't be broken by local decisions), the agent should stop.
-
-        Returns dict with recommendation and Hodge fractions.
-        """
-        rex = self.rex
-        result = {"recommendation": "continue"}
-
-        try:
-            flow = np.ones(rex.nE, dtype=np.float64)
-            h = rex.hodge_full(flow)
-            result["pct_gradient"] = round(h["pct_grad"], 3)
-            result["pct_curl"] = round(h["pct_curl"], 3)
-            result["pct_harmonic"] = round(h["pct_harm"], 3)
-
-            if h["pct_harm"] > harmonic_threshold:
-                result["recommendation"] = "stop"
-                result["reason"] = (
-                    f"Harmonic component is {h['pct_harm']:.0%}. The agent is stuck in "
-                    f"topological loops that can't be resolved by local transitions."
-                )
-            elif h["pct_curl"] > 0.6:
-                result["recommendation"] = "caution"
-                result["reason"] = (
-                    f"Curl component is {h['pct_curl']:.0%}. The agent is circulating "
-                    f"through face cycles. Consider breaking the loop."
-                )
-            else:
-                result["reason"] = (
-                    f"Gradient-dominated ({h['pct_grad']:.0%}). Making progress."
-                )
-        except Exception as e:
-            result["reason"] = f"Analysis failed: {e}"
-
-        return result
+    def should_continue(self, harmonic_threshold=None) -> dict:
+        """Observe recorded execution flow without inferring task completion from topology."""
+        if harmonic_threshold is not None:
+            raise ValueError("termination requires a task condition, not a harmonic threshold")
+        path = list(self._execution_log)
+        if len(path) < 2:
+            return {"recommendation": None, "evaluation_status": "not_evaluated",
+                    "observation_kind": "execution_flow", "reason": "no recorded transitions"}
+        result = self.decompose_path(path)
+        return {**result, "recommendation": None, "observation_kind": "execution_flow",
+                "evaluation_status": "error" if "error" in result else "evaluated",
+                "reason": "task completion requires an explicit task condition"}
 
     def detect_cycles(self) -> dict:
         """Detect structural cycles in the state graph.
@@ -305,29 +279,16 @@ class RexStateGraph:
             pct_harmonic: fraction that is structurally stuck
         """
         rex = self.rex
-        name_to_idx = {name: i for i, name in enumerate(self._state_order)}
 
-        # Build edge signal from path: activate each edge traversed
         signal = np.zeros(rex.nE, dtype=np.float64)
-
-        # An edge joining two states is in both their stars, so the transition is
-        # the intersection. The scan it replaces was O(len(path) * nE) over a dense
-        # nV x nE matrix to find one edge at a time.
-        stars: dict[int, np.ndarray] = {}
-
-        def _star(v: int) -> np.ndarray:
-            if v not in stars:
-                stars[v] = np.asarray(rex.star_of_vertex(int(v))[1], dtype=bool)
-            return stars[v]
-
-        for i in range(len(path) - 1):
-            src = name_to_idx.get(path[i])
-            tgt = name_to_idx.get(path[i + 1])
-            if src is None or tgt is None:
-                continue
-            both = np.flatnonzero(_star(src) & _star(tgt))
-            if both.size:
-                signal[both[0]] += 1.0     # one traversal, as the scan did
+        if rex.nE != len(self._transitions):
+            return {"error": "transition coordinates require an explicit source map", "path": path}
+        for first, second in zip(path, path[1:], strict=False):
+            matches = [i for i, transition in enumerate(self._transitions)
+                       if transition["src"] == first and transition["tgt"] == second]
+            if len(matches) != 1:
+                return {"error": "path transition is absent or needs an explicit relation identity", "path": path}
+            signal[matches[0]] += 1
 
         if np.allclose(signal, 0):
             return {"error": "No edges found for path", "path": path}
@@ -341,7 +302,7 @@ class RexStateGraph:
                 "pct_gradient": round(h["pct_grad"], 3),
                 "pct_curl": round(h["pct_curl"], 3),
                 "pct_harmonic": round(h["pct_harm"], 3),
-                "interpretation": _interpret_path_hodge(h),
+                "observation_kind": "declared_transition_flow",
             }
         except Exception as e:
             return {"error": str(e)}

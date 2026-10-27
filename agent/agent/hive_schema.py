@@ -29,7 +29,8 @@ class HiveSchema:
 
     def __init__(self, hive, *, store: rcdb.RCStore | None = None, lineage_id: str = "hive"):
         self.hive = hive
-        self.store = store or rcdb.default_store()
+        from agent.record_access import require_store
+        self.store = require_store(rcdb.default_store() if store is None else store)
         self.lineage_id = lineage_id
         # resources the hive is attached to but that are not bees: databases, stores, datasets.
         # name -> {"kind": str, "links": [(bee_name, relation)]}

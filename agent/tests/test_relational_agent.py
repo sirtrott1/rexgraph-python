@@ -44,7 +44,7 @@ def test_program_tool_schema_and_admission_reject_malformed_links_before_writes(
 def session(request, tmp_path):
     if request.param == "memory": store = MemoryStore()
     elif request.param == "local": store = open_store("local://" + str(tmp_path / "records"))
-    else: store = open_store("sqlite:///" + str(tmp_path / "records.sqlite"))
+    else: store = open_store("local://" + str(tmp_path / "records.sqlite"))
     value = RelationalSession(store)
     value.publish("data", RexGraph.from_cells([3, [[0, 1], [1, 2]]]), expected_version=0)
     yield value
@@ -115,7 +115,7 @@ def test_tools_and_hive_share_real_query_program_and_record_routes(tmp_path, mon
     ctx = Context(workspace="alpha", identity="alice", is_admin=False, auth_enabled=True)
     hive = Hive("relational")
     names = [d["name"] for d in definitions(ctx) if d["name"].startswith(("rexgraph_rcdb_", "rexgraph_rcql_"))]
-    assert len(hive.add_tools(context=ctx, names=names)) == 7
+    assert len(hive.add_tools(context=ctx, names=names)) == 8
     hive.invoke("rexgraph_rcdb_publish", {"record_id": "data", "cells": [3, [[0, 1], [1, 2]]], "expected_version": 0})
     hive.invoke("rexgraph_rcql_publish_program", {"record_id": "quote", "declaration": DECLARATION, "expected_version": 0})
     out = hive.invoke("rexgraph_rcql_run_program", {"record_id": "quote", "version": 1, "sources": SOURCE,

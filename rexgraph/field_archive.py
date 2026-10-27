@@ -45,6 +45,8 @@ CONDITIONED_FIELD_ARCHIVE_SCHEMA = "rexgraph.conditioned-field-family.v1"
 CONDITIONED_FIELD_ARCHIVE_METHOD = "exact-conditioned-field-program-v1"
 
 FIELD_ARCHIVE_METHODS = {LITERAL_FINITE_FIELD_ARCHIVE_SCHEMA: LITERAL_FINITE_FIELD_ARCHIVE_METHOD,
+                         "rexgraph.conditioned-assignment-response.v1": "exact-conditioned-assignment-response-v1",
+                         "rexgraph.available-finite-projection-replay.v1": "exact-available-finite-projection-replay-v1",
                          LITERAL_FINITE_EVALUATION_FIELD_ARCHIVE_SCHEMA: LITERAL_FINITE_EVALUATION_FIELD_ARCHIVE_METHOD,"rexgraph.conditioned-occurrence-field-family.v1": "exact-conditioned-occurrence-program-v1", "rexgraph.conditioned-joint-field-family.v1": "exact-conditioned-joint-field-family-v1", CONDITIONED_FIELD_ARCHIVE_SCHEMA: CONDITIONED_FIELD_ARCHIVE_METHOD,
                          KNOWN_PRODUCT_FIELD_ARCHIVE_SCHEMA: KNOWN_PRODUCT_FIELD_ARCHIVE_METHOD,FINITE_FIELD_ARCHIVE_SCHEMA: FINITE_FIELD_ARCHIVE_METHOD,
                          OPERATOR_FIELD_ARCHIVE_SCHEMA: OPERATOR_FIELD_ARCHIVE_METHOD,
@@ -69,7 +71,8 @@ def freeze_field_archive(value):
 
     if not isinstance(value, Mapping):
         raise TypeError("field archive requires an immutable value mapping")
-    carrier = ("operator_sha256" if value.get("schema") in OPERATOR_FIELD_ARCHIVE_SCHEMAS else
+    carrier = ("model_sha256" if value.get("schema") == "rexgraph.conditioned-assignment-response.v1" else
+               "operator_sha256" if value.get("schema") in OPERATOR_FIELD_ARCHIVE_SCHEMAS else
                "map_sha256" if value.get("schema") in FINITE_FIELD_ARCHIVE_SCHEMAS else "program_sha256")
     if set(value) != {"schema", "data", "sha256", carrier, "engine_receipt"}:
         raise ValueError("field archive envelope has unknown or missing fields")

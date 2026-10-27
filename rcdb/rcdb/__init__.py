@@ -14,7 +14,7 @@ from . import analytics, core, index, objectstore, protected_index, rexstore
 from .packet import RecordPacket, record_packet
 from .codecs import (COPY_RECEIPT_CODEC, DECLARATION_CODEC, MIGRATION_PLAN_CODEC,
                      MIGRATION_PROGRESS_CODEC, MIGRATION_STEP_CODEC, PROVENANCE_CODEC,
-                     QUERY_RESULT_CODEC, VALUE_CODEC, RecordCodec, available_record_codecs,
+                     QUERY_RESULT_CODEC, VALUE_CODEC, ONTOLOGY_CODEC, RecordCodec, available_record_codecs,
                      register_record_codec, unregister_record_codec)
 from .core import (
     ComplexRecord,
@@ -91,7 +91,7 @@ from .migration import MigrationBatch, MigrationPlan, MigrationProgress, Migrati
 
 #: Kept here rather than read back from installed metadata, so a source checkout reports
 #: what it is. pyproject.toml has to match; a test enforces it.
-__version__ = "1.3.2"
+__version__ = "1.4.0"
 
 __all__ = [
     "OrphanObject", "RetentionPlan", "RetentionPolicy",
@@ -99,7 +99,7 @@ __all__ = [
     "LEGACY_MIGRATION_LIMITATIONS", "LegacyMigrationBatch", "LegacyMigrationPlan", "LegacyRecordClaim",
     "migrate_legacy_batch", "plan_legacy_migration",
     "StoredRecord", "RecordCodec", "available_record_codecs", "register_record_codec", "unregister_record_codec",
-    "VALUE_CODEC", "PROVENANCE_CODEC", "DECLARATION_CODEC", "COPY_RECEIPT_CODEC",
+    "VALUE_CODEC", "PROVENANCE_CODEC", "DECLARATION_CODEC", "COPY_RECEIPT_CODEC", "ONTOLOGY_CODEC",
     "MIGRATION_PLAN_CODEC", "MIGRATION_PROGRESS_CODEC", "MIGRATION_STEP_CODEC", "QUERY_RESULT_CODEC",
     "BlobCodecSpec",
     "CodecRef",

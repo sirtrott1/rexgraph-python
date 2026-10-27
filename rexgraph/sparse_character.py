@@ -1121,7 +1121,7 @@ def _smallest_positive_eig(H, nE, tol=1e-9):
         pos = w[w > tol]
         return float(pos.min()) if pos.size else 0.0
 
-    # inverse power on H^+ (min norm LSQR = pseudoinverse, kernel robust).
+    # inverse power on H^+ (minimum norm LSQR applies the pseudoinverse).
     rs = _np.random.RandomState(0)
     x = rs.standard_normal(nE)
     x /= _np.linalg.norm(x)

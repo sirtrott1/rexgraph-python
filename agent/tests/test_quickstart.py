@@ -66,8 +66,8 @@ def test_a_backend_is_chosen_with_a_reason(corpus_dir):
 
 
 def test_an_explicit_store_uri_is_respected(corpus_dir):
-    p = quickstart.plan(str(corpus_dir), store="sqlite:///tmp/x.db")
-    assert p.store_uri == "sqlite:///tmp/x.db"
+    p = quickstart.plan(str(corpus_dir), store="local://tmp/x.db")
+    assert p.store_uri == "local://tmp/x.db"
 
 
 def test_depth_follows_the_amount_of_work(corpus_dir):
@@ -93,11 +93,11 @@ def test_the_summary_is_readable_and_complete(corpus_dir):
 
 def test_missing_extras_come_with_the_command_to_get_them(corpus_dir, monkeypatch):
     monkeypatch.setattr(quickstart, "_have", lambda m: False)
-    p = quickstart.plan(str(corpus_dir))
+    p = quickstart.plan(str(corpus_dir), store="s3://bucket/prefix")
     assert p.missing
     cmd = p.install_command()
     assert cmd and "pip install" in cmd
-    assert "duckdb" in cmd
+    assert "s3fs" in cmd
 
 
 def test_a_cloud_store_asks_for_that_provider_s_driver(corpus_dir, monkeypatch):
@@ -108,7 +108,7 @@ def test_a_cloud_store_asks_for_that_provider_s_driver(corpus_dir, monkeypatch):
 
 def test_nothing_is_missing_when_everything_is_present(corpus_dir, monkeypatch):
     monkeypatch.setattr(quickstart, "_have", lambda m: True)
-    p = quickstart.plan(str(corpus_dir))
+    p = quickstart.plan(str(corpus_dir), store="s3://bucket/prefix")
     assert p.missing == {}
     assert p.install_command() is None
 
@@ -120,7 +120,7 @@ def test_install_does_not_run_without_being_asked(corpus_dir, monkeypatch):
     called = []
     monkeypatch.setattr(quickstart.subprocess, "run",
                         lambda *a, **kw: called.append(a) or None)
-    out = quickstart.install(quickstart.plan(str(corpus_dir)))
+    out = quickstart.install(quickstart.plan(str(corpus_dir), store="s3://bucket/prefix"))
     assert out["skipped"] is True and not called
     assert "pip install" in out["command"]
 

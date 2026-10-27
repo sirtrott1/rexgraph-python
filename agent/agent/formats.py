@@ -20,7 +20,7 @@ BUNDLE_SUFFIX = ".rcbd"
 LEGACY_BUNDLE_SUFFIXES = (".rex",)
 
 #: Every suffix a bundle may arrive with, canonical first.
-BUNDLE_SUFFIXES = (BUNDLE_SUFFIX, *LEGACY_BUNDLE_SUFFIXES)
+BUNDLE_SUFFIXES = (BUNDLE_SUFFIX, ".rcbf", *LEGACY_BUNDLE_SUFFIXES)
 
 __all__ = [
     "BUNDLE_SUFFIX",

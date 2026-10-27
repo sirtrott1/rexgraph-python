@@ -18,7 +18,7 @@ from agent.courier import CarrySpec, Courier
 from rexgraph.graph import RexGraph
 
 run_isolated = run_path(str(Path(__file__).resolve().parents[2] / "rexgraph/tests/_support/test_subprocess.py"))["run_isolated"]
-KINDS = ("memory", "local", "sql", "object-file", "object-memory")
+KINDS = ('memory', 'local', 'object-file', 'object-memory')
 
 
 @pytest.fixture(autouse=True)
@@ -36,8 +36,6 @@ def opened(kind, path):
         return rcdb.MemoryStore()
     if kind == "local":
         return rcdb.LocalStore(path)
-    if kind == "sql":
-        return rcdb.SQLStore(f"sqlite:///{path}.sqlite")
     pytest.importorskip("fsspec")
     return rcdb.NativeObjectStore(f"{'file' if kind == 'object-file' else 'memory'}://{path}")
 
@@ -433,7 +431,7 @@ assert not t.is_alive()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("kind", ["local", "sql", "object-file"])
+@pytest.mark.parametrize("kind", ['local', 'object-file'])
 def test_fresh_process_arrivals_use_native_conditional_copy(kind, tmp_path):
     src_path, dst_path = tmp_path / "src", tmp_path / "dst"
     with closing(rcdb.LocalStore(src_path)) as src:
@@ -441,7 +439,7 @@ def test_fresh_process_arrivals_use_native_conditional_copy(kind, tmp_path):
     # Launch independently imported interpreters. No inherited store handles,
     # pools or native runtime threads enter a child process.
     constructor = {"local": f"rcdb.LocalStore({str(dst_path)!r})",
-                   "sql": f"rcdb.SQLStore({'sqlite:///'+str(dst_path)+'.sqlite'!r})",
+                   "sql": f"rcdb.LocalStore({'local://'+str(dst_path)+'.sqlite'!r})",
                    "object-file": f"rcdb.NativeObjectStore({'file://'+str(dst_path)!r})"}[kind]
     code = f"""
 from agent import rcdb

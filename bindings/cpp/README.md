@@ -18,7 +18,7 @@ and free parameter directions for the application to inspect or constrain.
 
 ## Installation
 
-Install the `rexgraph-cpp` 0.2.1 SDK with CMake, then build the bindings using its
+Install the `rexgraph-cpp` 0.3.0 SDK with CMake, then build the bindings using its
 installation prefix. The build requires a C++20 compiler, GMP, GMPXX, Python
 development headers and Cython.
 
@@ -2724,3 +2724,45 @@ affine setting remains separate from the input specific operator choice, includi
 when the affine free vector is empty. Raw getters are passive mathematical escapes;
 `field_map` exposes the separately admitted child with its declared narrower scope.
 The four operator/instance/family/evaluation archives retain complete ancestry.
+
+## Native source revisions
+
+`NativeSourceEvolution` owns a complete native temporal series. Its `append(frame)`
+and `add_declarations(specification)` methods return new owners while retaining
+the parent's bytes and earlier endpoints. Resource limits remain attached to each
+fork and apply to its resulting history as well as its input.
+
+```python
+from rexgraph_cpp import NativeSource, NativeSourceEvolution
+
+source = NativeSource.from_declaration({
+    "profile": "declared-exact-source-v1", "namespace": 42,
+    "semantic_scale": 1, "max_grade": 1,
+    "types": (), "witnesses": (10,), "relations": (),
+    "carriers": (), "fields": (), "metrics": (),
+})
+parent = NativeSourceEvolution(source.archive)
+child = parent.add_declarations({
+    "profile": "source-signature-additions-v1", "aspects": (),
+    "types": ({"name": "observation", "min_arity": 0, "max_arity": 4},),
+})
+assert parent.identity == (42, 0, 0, 0)
+assert child.identity == (42, 0, 1, 1)
+assert child.source().at(0).archive == parent.source().at(0).archive
+assert NativeSourceEvolution(child.archive).archive == child.archive
+```
+
+An aspect addition supplies `name`, `role`, `builder_default`, `fill` and ordered
+`assignments`. A boolean fill explicitly covers existing occurrences; with
+`fill=None`, assignments must cover every occurrence exactly once, including
+inactive and supported-zero occurrences. Each assignment is a
+`(grade, occurrence_key, boolean)` tuple. Additions preserve signed incidence
+aspects, all original fields and support. New relation types use explicit minimum
+and maximum arity with declared exact boundaries.
+
+`append` takes a canonical native temporal frame for the selected parent.
+Invalid frames, wrong parents and resource excesses reject without changing that
+parent. The owning `source()` view can outlive earlier Python owners. These
+operations do not infer a map from a Python graph or prove declared ontology axioms.
+The [Core ontology guide](../../rexgraph/README.md#ontology-snapshots) and
+[query guide](../../rcql/README.md#ontology-queries) describe the enclosing values.

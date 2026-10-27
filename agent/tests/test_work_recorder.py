@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "rcdb.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "rcdb.sqlite"))
     from agent.rcdb import reset_default_store
     monkeypatch.setenv("REXGRAPH_CONFIG_DIR", str(tmp_path / "ws"))
     # `_store()` resolves through agent.rcdb.default_store, which caches process wide;

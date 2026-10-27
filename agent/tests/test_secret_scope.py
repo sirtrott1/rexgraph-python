@@ -1,15 +1,4 @@
-"""Saved database connections belong to a workspace.
-
-`routes/dbmanager.py` declares no authorization and `_secrets()` is a process wide
-singleton, so every tenant shared one connection store: a name collision overwrote
-someone else's credentials, a DELETE removed them, and `POST /test` resolved another
-tenant's saved name and dialled their host with their full credentialed URI.
-
-The header is the other half. `identity_and_workspace` took `X-Workspace` verbatim, so
-on any route that does not declare `require_workspace` a caller could name a workspace
-their token does not grant and be scoped to it. Scoping the store without that fix only
-scopes to whatever the caller asserted.
-"""
+"""Native record routes retain socket identity and workspace isolation."""
 from __future__ import annotations
 
 import pytest
@@ -41,55 +30,68 @@ def tenants(tmp_path, monkeypatch):
     auth.reset_auth_manager(); audit.reset_cache()
 
 
-def _save(client, headers, name, uri):
-    r = client.post("/api/v1/dbmanager/connections", headers=headers,
-                    json={"name": name, "uri": uri})
-    assert r.status_code == 200, r.text
-    return r
+def _seed():
+    from agent import rcdb
+    from rexgraph import RexGraph
+    rcdb.reset_default_store()
+    store = rcdb.default_store()
+    store.put("alpha-record", RexGraph.from_cells([3, [[0, 1, 2]]]), meta={"workspace": "alpha"})
+    store.put("beta-record", RexGraph.from_cells([2, [[0, 1]]]), meta={"workspace": "beta"})
+    return store
 
 
 def _names(client, headers):
-    r = client.get("/api/v1/dbmanager/connections", headers=headers)
-    assert r.status_code == 200, r.text
-    return [c.get("name") for c in r.json()["connections"]]
+    result = client.get("/api/v1/dbmanager/records", headers=headers)
+    assert result.status_code == 200, result.text
+    return {row["id"] for row in result.json()["result"]["records"]}
 
 
-def test_a_tenant_does_not_see_another_tenants_connections(tenants):
-    client, ah, bh = tenants
-    _save(client, ah, "prod", ALPHA_URI)
-    assert "prod" not in _names(client, bh), "bob listed alice's connection"
+def test_a_tenant_only_lists_its_native_records(tenants):
+    client, alice, bob = tenants
+    _seed()
+    assert _names(client, alice) == {"alpha-record"}
+    assert _names(client, bob) == {"beta-record"}
 
 
-def test_a_tenant_cannot_resolve_another_tenants_connection(tenants):
-    client, ah, bh = tenants
-    _save(client, ah, "prod", ALPHA_URI)
-    r = client.post("/api/v1/dbmanager/test", headers=bh, json={"name": "prod"})
-    assert r.status_code == 404, f"bob resolved alice's credentials: {r.text}"
+def test_a_tenant_cannot_inspect_another_tenants_native_record(tenants):
+    client, alice, bob = tenants
+    _seed()
+    result = client.post("/api/v1/dbmanager/inspect", headers=bob,
+                         json={"record_id": "alpha-record", "version": 1})
+    assert result.status_code == 404, result.text
 
 
-def test_a_forged_workspace_header_does_not_bind_another_workspace(tenants):
-    client, ah, bh = tenants
-    _save(client, ah, "prod", ALPHA_URI)
-    forged = dict(bh); forged["X-Workspace"] = "alpha"
-    assert "prod" not in _names(client, forged), "bob named a workspace he has no role in"
+def test_forged_workspace_cannot_bind_another_record_scope(tenants):
+    client, alice, bob = tenants
+    _seed()
+    forged = {**bob, "X-Workspace": "alpha"}
+    result = client.get("/api/v1/dbmanager/records", headers=forged)
+    assert result.status_code == 403, result.text
 
 
-def test_a_colliding_name_does_not_overwrite_the_other_tenant(tenants):
-    client, ah, bh = tenants
-    _save(client, ah, "prod", ALPHA_URI)
-    _save(client, bh, "prod", BETA_URI)
-    r = client.post("/api/v1/dbmanager/test", headers=ah, json={"name": "prod"})
-    assert "alpha.example.com" in r.json().get("uri", ""), "bob overwrote alice's connection"
+def test_cross_workspace_publication_does_not_overwrite(tenants):
+    client, alice, bob = tenants
+    store = _seed()
+    before = store.read_record("alpha-record").state_digest
+    result = client.post("/api/v1/dbmanager/publish", headers=bob, json={
+        "record_id": "alpha-record", "expected_version": 1, "cells": [2, [[0, 1]]]})
+    assert result.status_code in {400, 403, 404}, result.text
+    assert store.read_record("alpha-record").state_digest == before
+    assert store.get_record("alpha-record").version == 1
 
 
-def test_deleting_another_tenants_connection_is_a_noop(tenants):
-    client, ah, bh = tenants
-    _save(client, ah, "prod", ALPHA_URI)
-    client.delete("/api/v1/dbmanager/connections/prod", headers=bh)
-    assert "prod" in _names(client, ah), "bob deleted alice's connection"
+def test_sql_source_connections_are_scoped_without_becoming_primary_stores(tenants):
+    client,alice,bob=tenants
+    response=client.post("/api/v1/dbmanager/connections",headers=alice,json={"name":"prod","uri":ALPHA_URI})
+    assert response.status_code==200
+    own=client.get("/api/v1/dbmanager/connections",headers=alice).json()["connections"]
+    other=client.get("/api/v1/dbmanager/connections",headers=bob).json()["connections"]
+    assert own==[{"name":"prod","kind":"sql"}] and other==[]
+    response=client.post("/api/v1/dbmanager/sql/catalog",headers=bob,json={"connection":"prod"})
+    assert response.status_code==404
 
 
-def test_outside_a_request_nothing_is_filtered(tmp_path, monkeypatch):
+def test_outside_a_request_saved_secrets_remain_operator_owned(tmp_path, monkeypatch):
     monkeypatch.setenv("REXGRAPH_SECRETS_URI", f"file://{tmp_path}/c.json")
     from agent.secrets import open_secret_store
     store = open_secret_store()
@@ -98,10 +100,12 @@ def test_outside_a_request_nothing_is_filtered(tmp_path, monkeypatch):
     assert [c.get("name") for c in store.list()] == ["cli"]
 
 
-def test_connectors_resolves_through_the_same_scoped_view(tenants):
-    """routes/connectors reached open_secret_store() directly, so read, validate and
-    ingest each dialled another tenant's database with their full credentialed URI."""
-    client, ah, bh = tenants
-    _save(client, ah, "prod", ALPHA_URI)
-    r = client.post("/api/v1/connectors/validate", headers=bh, json={"name": "prod"})
-    assert r.status_code == 404, f"bob resolved alice's connection: {r.text}"
+def test_connector_native_record_reads_obey_the_same_workspace_scope(tenants):
+    client, alice, bob = tenants
+    _seed()
+    result = client.post("/api/v1/connectors/read", headers=bob,
+                         json={"scheme": "rcdb", "source": {"record_id": "alpha-record"}})
+    assert result.status_code == 400
+    result = client.post("/api/v1/connectors/read", headers=alice,
+                         json={"scheme": "rcdb", "source": {"record_id": "alpha-record"}})
+    assert result.status_code == 200 and result.json()["nE"] == 1, result.text

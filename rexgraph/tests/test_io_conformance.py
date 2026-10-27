@@ -46,7 +46,7 @@ def equal_source(back, original):
     assert to_state(back).header["digest"] == to_state(original).header["digest"]
 
 
-@pytest.mark.parametrize("container", ["rcbd", "safetensors", "hdf5", "zarr", "arrow", "wire", "state"])
+@pytest.mark.parametrize("container", ["rcbf", "rcbd", "safetensors", "hdf5", "zarr", "arrow", "wire", "state"])
 def test_all_containers_reconstruct_the_same_declared_state(container, tmp_path):
     original = fixture()
     if container in {"state", "wire"}:
@@ -67,7 +67,7 @@ def test_all_containers_reconstruct_the_same_declared_state(container, tmp_path)
     equal_source(back, original)
 
 
-@pytest.mark.parametrize("container", ["rcbd", "safetensors", "hdf5", "zarr", "arrow", "wire", "state"])
+@pytest.mark.parametrize("container", ["rcbf", "rcbd", "safetensors", "hdf5", "zarr", "arrow", "wire", "state"])
 def test_containers_preserve_an_explicit_empty_face_basis(container, tmp_path):
     from rexgraph import Selection, restrict
     from rexgraph.partition_state import partition_tower

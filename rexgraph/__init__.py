@@ -110,7 +110,7 @@ from .value import Absent, Approx, NumberRule, ValueRules, ExactTime, TimeRange
 from .exact_array import ExactArray
 from .selection import Selection, CellMaps, Lineage, restrict, glue
 
-__version__ = "1.3.2"
+__version__ = "1.4.0"
 
 __all__ = [
     "Relations", "RelationSpec", "VertexTable", "Absent", "Approx", "NumberRule", "ValueRules", "ExactTime", "TimeRange", "ExactArray",

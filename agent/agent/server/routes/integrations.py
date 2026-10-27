@@ -314,9 +314,8 @@ async def langgraph_state(body: dict = Body({})):
     """Analyze an agent state machine as a relational complex.
 
     Works standalone (no langgraph needed): nodes are states, edges are
-    transitions. Reports whether the agent is making progress (gradient),
-    circulating (curl), or structurally stuck (harmonic), plus cycles and
-    channel character.
+    transitions. Reports topology, channel character and the Hodge decomposition
+    of an explicitly recorded path. Task completion needs a task condition.
     """
     try:
         from agent.integrations.langgraph_rex import RexStateGraph
@@ -346,8 +345,9 @@ async def langgraph_state(body: dict = Body({})):
         betti = a.get("betti", topo.get("betti"))
         if betti is None:
             betti = [topo.get("b0"), topo.get("b1_filled"), topo.get("b2")]
-        decision = rsg.should_continue(
-            harmonic_threshold=body.get("harmonic_threshold", 0.4))
+        for state in body.get("visits", []):
+            rsg.log_visit(state)
+        decision = rsg.should_continue(harmonic_threshold=body.get("harmonic_threshold"))
 
         result = {
             "nV": len(states),
@@ -361,7 +361,8 @@ async def langgraph_state(body: dict = Body({})):
                 "curl": round(float(hodge.get("pct_curl", hodge.get("curlPct", 0) / 100.0)), 4),
                 "harmonic": round(float(hodge.get("pct_harmonic", hodge.get("harmPct", 0) / 100.0)), 4),
             },
-            "recommendation": decision.get("recommendation", "continue"),
+            "recommendation": decision.get("recommendation"),
+            "execution": decision,
             "reason": decision.get("reason", ""),
             "cycles": rsg.detect_cycles(),
             "channel_profile": rsg.channel_profile(),

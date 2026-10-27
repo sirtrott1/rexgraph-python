@@ -24,7 +24,8 @@ def test_require_grows_the_team():
     h = _hive()
     con = CommandConsole(h, reactive=ReactiveHive(h, store=rcdb.MemoryStore()))
     r = con.command("require review test", scope="hive", confirm=True)
-    assert r["ok"] and h.get("reviewer") is not None and h.get("tester") is not None
+    assert r["ok"] and h.get("reviewer") is None and h.get("tester") is None
+    assert {row["unmet"] for row in r["deployed"]} == {"review", "test"}
 
 
 def test_require_is_governed():

@@ -1300,23 +1300,23 @@ components.
 
   Computes structural metrics in six phases, all in O(nnz(B2) + nE) total:
 
-  Phase 1: Face sizes (boundary edge count) and face vertex counts.
+  Face sizes (boundary edge count) and face vertex counts.
 
-  Phase 2: Per edge contribution: for each edge, the average reciprocal face
+  Per edge contribution: for each edge, the average reciprocal face
   size (1/|boundary|) across its incident faces, and the average face size.
 
-  Phase 3: Boundary asymmetry: |fc(src) - fc(tgt)| / max(fc(src), fc(tgt)),
+  Boundary asymmetry: |fc(src) - fc(tgt)| / max(fc(src), fc(tgt)),
   where fc is the vertex face count. Measures how asymmetric a face
   distribution is across an edge's endpoints.
 
-  Phase 4: Per vertex contribution: average reciprocal face vertex count and
+  Per vertex contribution: average reciprocal face vertex count and
   average face size across a vertex's incident faces.
 
-  Phase 5: Face concentration: coefficient of variation (CV = std/mean) of
+  Face concentration: coefficient of variation (CV = std/mean) of
   vertex face counts within each face. Uses Welford's single pass algorithm to
   compute mean and variance in one traversal of B2 per face.
 
-  Phase 6: Pearson correlation between boundary asymmetry and harmonic
+  Pearson correlation between boundary asymmetry and harmonic
   resistance ratio (rho). Measures whether topologically asymmetric edges tend
   to carry more harmonic flow.
 

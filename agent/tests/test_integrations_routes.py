@@ -89,13 +89,14 @@ class TestLangGraph:
         assert d["hodge"]["gradient"] is not None
         # some hodge energy must be present (not all zero)
         assert (d["hodge"]["gradient"] + d["hodge"]["curl"] + d["hodge"]["harmonic"]) > 0
-        assert d["recommendation"] in ("continue", "caution", "stop", "halt")
+        assert d["recommendation"] is None
+        assert d["execution"]["evaluation_status"] == "not_evaluated"
 
     def test_pure_cycle_is_curl_dominated(self, client):
         r = client.post("/api/v1/langgraph/state", json={
             "states": ["a", "b", "c"],
             "transitions": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"},
-                            {"from": "c", "to": "a"}]})
+                            {"from": "c", "to": "a"}], "visits": ["a", "b", "c", "a"]})
         assert r.status_code == 200
         d = r.json()
         # a 3 cycle is a pure circulation -> curl dominates

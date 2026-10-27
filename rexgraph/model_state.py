@@ -222,6 +222,12 @@ class ModelState:
         if self.adapter == "cpp_relational_finite_field":
             from rexgraph.cpp_relational_finite_field import validate_finite_field_state
             validate_finite_field_state(self)
+        if self.adapter == "cpp_finite_search":
+            from rexgraph.cpp_finite_search import validate_finite_search_state
+            validate_finite_search_state(self)
+        if self.adapter == "cpp_assignment_evidence":
+            from rexgraph.cpp_assignment import validate_assignment_state
+            validate_assignment_state(self)
         if self.adapter == "cpp_relational_finite_operator":
             from rexgraph.cpp_relational_finite_operator import validate_finite_operator_state
             validate_finite_operator_state(self)
@@ -329,7 +335,8 @@ class ModelOutput:
                              "exact-available-relational-local-solve-v1", "exact-available-relational-finite-field-family-v1",
                              "exact-available-relational-finite-field-evaluation-v1",
                              "exact-available-relational-finite-operator-family-v1",
-                             "exact-available-relational-finite-operator-evaluation-v1"}:
+                             "exact-available-relational-finite-operator-evaluation-v1",
+                             "exact-available-finite-projection-replay-v1", "exact-conditioned-assignment-response-v1"}:
             raise ValueError("whole-field program output requires its immutable field archive")
         if self.execution_receipt is not None:
             if not isinstance(self.execution_receipt, Mapping):
@@ -567,6 +574,9 @@ class ModelBatch:
             elif self.targets.get("profile") == "rexgraph.conditioned-field-training.v1":
                 from rexgraph.cpp_conditioned_field_program import validate_conditioned_field_targets
                 target = validate_conditioned_field_targets(self.targets,self.source,self.space,mask)
+            elif self.targets.get("profile") == "rexgraph.available-assignment-observations.v1":
+                from rexgraph.cpp_assignment import validate_assignment_targets
+                target = validate_assignment_targets(self.targets,self.source,self.space,mask)
             else:
                 target = _encoded_stalk_targets(self.targets,self.source,self.space,mask)
             declared_target = None

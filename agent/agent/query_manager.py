@@ -236,7 +236,8 @@ class QueryManager:
     the RCDB memory so a structurally similar past query can be recalled (the memory worker)."""
 
     def __init__(self, store: rcdb.RCStore | None = None, schema=None):
-        self.store = store or rcdb.default_store()
+        from agent.record_access import require_store
+        self.store = require_store(rcdb.default_store() if store is None else store)
         self.schema = schema                       # a SchemaModel, or None
         self._sessions: dict[str, QuerySession] = {}
 

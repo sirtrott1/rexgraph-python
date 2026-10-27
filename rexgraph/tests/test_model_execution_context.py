@@ -176,3 +176,33 @@ def test_provider_operation_configuration_does_not_replace_dispatch(contextual):
     assert invoke_model_provider(provider, "create", "source", operation="restore",
                                  execution_context=context) == "restore"
     assert calls == [("source", "restore", {"execution_context": authority} if contextual else {})]
+
+
+@pytest.mark.parametrize('contextual_prepare',[False,True])
+def test_native_record_source_binding_and_preparation_context_are_separate(contextual_prepare, monkeypatch):
+    from pathlib import Path
+    native=pytest.importorskip('rexgraph_cpp')
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]/'bindings/cpp/tests'))
+    from test_construction import declaration
+    from rexgraph.cpp_model import cpp_model
+    from rexgraph.io.model_record import model_record,read_model_record
+    from dataclasses import replace
+    source=native.NativeSource.from_declaration(declaration())
+    state=replace(cpp_model(source,(10,11,12)),adapter='record_context',
+        configuration={'execution_provider':{'name':'record_context','version':'1'}})
+    authority=object();calls=[]
+    def prepare(selected,current,**kwargs):
+        calls.append(kwargs)
+        if contextual_prepare and kwargs.get('execution_context') is not authority:
+            raise ValueError('wrong preparation authority')
+    provider=ModelProvider('record_context','1',(('record_context','1'),),lambda *a,**k:None,prepare=prepare,
+        context_operations=('infer','prepare') if contextual_prepare else ('infer',))
+    contract.register_model_provider(provider)
+    record=model_record(source,state)
+    detached,owner=read_model_record(record,_prepare=False)
+    assert detached.source.matches(state.source) and owner.identity==source.identity and not calls
+    if contextual_prepare:
+        with pytest.raises(ValueError,match='separate execution context'):read_model_record(record)
+    restored,owner=read_model_record(record,execution_context=authority)
+    assert restored.source.matches(state.source)
+    assert calls==[{'execution_context':authority} if contextual_prepare else {}]

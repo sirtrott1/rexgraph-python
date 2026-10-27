@@ -13,48 +13,35 @@ from typing import Any
 from . import _SCHEME_MAP, open_connector, to_rexgraph
 from .validate import ValidationReport, validate_connector
 
-# Per scheme driver probe: (module to import, pip hint). None => no driver needed
-# (the in-memory/structure path). This powers the app's "not configured" UX so a
-# missing warehouse driver shows an install hint instead of a dead button.
-_WAREHOUSE_HINT = "pip install 'rexgraph-agent[warehouse]'"
-
-# Schemes for which a cardinality weight pull is meaningful (SQL + warehouses).
-# Shared by the CLI and the HTTP route so "weights" means one thing everywhere.
-WEIGHTABLE_SCHEMES = frozenset({
-    "sqlite", "postgresql", "postgres", "mysql", "mariadb", "oracle", "mssql",
-    "snowflake", "bigquery", "redshift", "databricks",
-})
+# Native files retain their declared fields without a separate cardinality pull.
+from agent.record_access import SQL_SCHEMES
+WEIGHTABLE_SCHEMES = SQL_SCHEMES
 
 
 def weight_kwargs(uri: str, want_weights: bool) -> dict[str, Any]:
     """`{'with_weights': True}` only when weights are requested *and* the scheme
-    supports them; otherwise empty (so non SQL connectors aren't handed an
+    supports them; otherwise empty (so other connectors aren't handed an
     argument their constructor doesn't accept)."""
     return ({"with_weights": True}
             if want_weights and _scheme_of(uri) in WEIGHTABLE_SCHEMES else {})
-_DRIVER_PROBE: dict[str, tuple[str | None, str]] = {
-    "sqlite": ("sqlalchemy", "pip install sqlalchemy"),
-    "postgresql": ("sqlalchemy", "pip install sqlalchemy psycopg2-binary"),
-    "postgres": ("sqlalchemy", "pip install sqlalchemy psycopg2-binary"),
-    "mysql": ("sqlalchemy", "pip install sqlalchemy pymysql"),
-    "mariadb": ("sqlalchemy", "pip install sqlalchemy pymysql"),
-    "oracle": ("sqlalchemy", "pip install sqlalchemy oracledb"),
-    "mssql": ("sqlalchemy", "pip install sqlalchemy pyodbc"),
-    "snowflake": ("snowflake.sqlalchemy", _WAREHOUSE_HINT),
-    "bigquery": ("sqlalchemy_bigquery", _WAREHOUSE_HINT),
-    "redshift": ("sqlalchemy_redshift", _WAREHOUSE_HINT),
-    "databricks": ("databricks.sqlalchemy", _WAREHOUSE_HINT),
-    "mongodb": ("pymongo", "pip install pymongo"),
-    "neo4j": ("neo4j", "pip install neo4j  (or pass an in-memory structure)"),
-    "bolt": ("neo4j", "pip install neo4j  (or pass an in-memory structure)"),
-    "kafka": ("confluent_kafka", "pip install confluent-kafka  (or pass a structure)"),
-    "pulsar": ("pulsar", "pip install pulsar-client  (or pass a structure)"),
-    "ontology": (None, ""),
-    "rdf": (None, ""),
-    "owl": (None, ""),
-    "edges": (None, ""),
-    "table": (None, ""),
+_DRIVER_PROBE = {
+    'mongodb': ('pymongo', 'pip install pymongo'),
+    'neo4j': ('neo4j', 'pip install neo4j  (or pass an in-memory structure)'),
+    'bolt': ('neo4j', 'pip install neo4j  (or pass an in-memory structure)'),
+    'kafka': ('confluent_kafka', 'pip install confluent-kafka  (or pass a structure)'),
+    'pulsar': ('pulsar', 'pip install pulsar-client  (or pass a structure)'),
+    'ontology': (None, ''),
+    'rdf': (None, ''),
+    'owl': (None, ''),
+    'edges': (None, ''),
+    'table': (None, ''),
+    'rcdb': (None, ""),
+    'rcbd': (None, ""),
+    'rcbf': (None, ""),
 }
+
+for _scheme in SQL_SCHEMES:
+    _DRIVER_PROBE[_scheme] = ("sqlalchemy", "pip install 'rexgraph-agent[sql]' and the source dialect driver")
 
 
 def _scheme_of(uri: str) -> str:
@@ -65,6 +52,14 @@ def _scheme_of(uri: str) -> str:
 def driver_status(scheme: str) -> dict[str, Any]:
     """Whether the driver for ``scheme`` is importable, plus a pip hint if not.
     In memory shapes report available=True (no driver needed)."""
+    if scheme.split("+",1)[0].lower() in SQL_SCHEMES:
+        try:
+            from sqlalchemy.dialects import registry
+            dialect=registry.load(scheme.replace("+","."))
+            dialect.import_dbapi()
+            return {"available":True,"hint":""}
+        except Exception:
+            return {"available":False,"hint":"pip install 'rexgraph-agent[sql]' and the source dialect driver"}
     scheme = scheme.lower()
     probe, hint = _DRIVER_PROBE.get(scheme, ("", ""))
     if probe is None:                       # in memory shape, no driver
@@ -121,7 +116,8 @@ def read(uri: str, source: Any = None, **kwargs) -> dict[str, Any]:
     URI sources, ``source`` defaults to the URI itself."""
     connector = open_connector(uri, **kwargs)
     rex, meta = connector.read(uri if source is None else source)
-    g = to_rexgraph(rex, meta)
+    from .records import NativeFileConnector, RCDBConnector
+    g = rex if isinstance(connector, (NativeFileConnector, RCDBConnector)) else to_rexgraph(rex, meta)
     return _summary(g, meta)
 
 
@@ -140,7 +136,9 @@ def ingest(uri: str, record_id: str, *, store: Any = None,
     writing operation, and it writes solely to the host's own store: either a
     pre opened ``store`` (e.g. the app's singleton) or one opened from
     ``store_uri``."""
-    from agent.rcdb import open_store
+    from agent.rcdb import copy_record, open_store
+    from agent.record_access import require_store
+    from .records import NativeFileConnector, RCDBConnector, _complex
 
     # Close only what we opened. A caller that handed us its own store, the app's
     # singleton for instance, still owns it and must get it back open.
@@ -151,9 +149,19 @@ def ingest(uri: str, record_id: str, *, store: Any = None,
         store = ours = open_store(store_uri)
 
     try:
+        require_store(store)
         connector = open_connector(uri, **kwargs)
+        if isinstance(connector, RCDBConnector):
+            session, selected = connector.select(source)
+            graph, meta = _complex(selected.value, "rcdb:" + selected.record.id)
+            record = copy_record(session.store, store, selected.record,
+                destination_id=record_id, tags=tags, expected_digest=selected.state_digest)
+            if record is None:
+                raise ValueError("selected RCDB source disappeared")
+            return {**_summary(graph, meta), "stored_as": record.id,
+                    "version": record.version, "store": store_uri or type(store).__name__}
         rex, meta = connector.read(uri if source is None else source)
-        g = to_rexgraph(rex, meta)
+        g = rex if isinstance(connector, NativeFileConnector) else to_rexgraph(rex, meta)
         store.put(record_id, g, meta=getattr(g, "_agent_meta", None),
                   tags=list(tags or []))
         out = _summary(g, meta)

@@ -89,6 +89,25 @@ def test_full_exact_views_keep_source_and_distinct_carrier_owners(word_case):
         uninitialised.observe()
 
 
+@pytest.mark.parametrize("engine_version", ["0.2.1", "0.3.0"])
+def test_portable_engine_versions_remain_readable(word_case, engine_version):
+    reference = deepcopy(phase_fold_reference(word_case[1]))
+    reference["sdk"]["engine_version"] = engine_version
+    assert validate_phase_fold_reference(reference) == reference
+    reference["sdk"]["engine_version"] = "0.4.0"
+    with pytest.raises(ValueError, match="native engine profile"):
+        validate_phase_fold_reference(reference)
+
+
+def test_prior_engine_record_requires_its_matching_runtime(word_case):
+    record = phase_fold_record(word_case[1])
+    reference = record.get_metadata(1, 0, "phase_fold_archive")["reference"]
+    reference["sdk"]["engine_version"] = "0.2.1"
+    validate_phase_fold_reference(reference)
+    with pytest.raises(ValueError, match="declaration differs"):
+        read_phase_fold_record(record)
+
+
 @pytest.mark.parametrize("cut", ["zero", "full"])
 def test_logical_prefix_bytes_match_canonical_oracles_and_drop_all_proposals(
     word_case, word_fixtures, cut

@@ -9,7 +9,7 @@ record storage integration and application services.
 #: shared contracts: declared native state, portable results and exact record
 #: metadata require this development series. No release is published by a bump.
 #: pyproject.toml and the other four packages must agree.
-__version__ = "1.3.2"
+__version__ = "1.4.0"
 
 from .auto import auto_analyze, auto_rex, auto_rex_text, detect_input_type
 from .analysis import analyze
@@ -35,6 +35,9 @@ __all__ = [
     "DecisionEngine",
     "rcql_runtime",
     "RelationalSession",
+    "FamilyVerifier",
+    "LearnedWorker",
+    "FiniteProgramFactory",
 ]
 
 
@@ -46,4 +49,13 @@ def __getattr__(name):
     if name == "RelationalSession":
         from .relational import RelationalSession
         return RelationalSession
+    if name == "FamilyVerifier":
+        from .family_verification import FamilyVerifier
+        return FamilyVerifier
+    if name == "LearnedWorker":
+        from .learned_worker import LearnedWorker
+        return LearnedWorker
+    if name == "FiniteProgramFactory":
+        from .program_factory import FiniteProgramFactory
+        return FiniteProgramFactory
     raise AttributeError(name)

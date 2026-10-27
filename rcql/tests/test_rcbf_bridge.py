@@ -62,3 +62,35 @@ def test_rcbf_can_be_loaded_from_a_catalog_stored_in_rcdb_and_queried(tmp_path):
         'RETURN BETTI(0), BETTI(1), ARITY(CELL(1, 0))'
     ))
     assert stored_result.values == (2, 0, 3)
+
+
+def test_complete_rcbf_can_be_queried_and_stored_with_exact_identity(tmp_path):
+    from contextlib import closing
+    from fractions import Fraction
+    from rexgraph import Relations, RexGraph, VertexTable
+    from rexgraph.io import save_rcbf
+    from rexgraph.object_identity import object_digest
+
+    rcdb = pytest.importorskip("rcdb")
+    graph = RexGraph.from_relations(Relations.from_supports(
+        [[0, 1, 2], [2, 2]], vertices=VertexTable(("a", "b", "c")),
+        relation_ids=["original-branch", "original-zero-loop"],
+        weights=[Fraction(2, 3), 0],
+        attributes={1: {0: {"data": (2**100+1, None, b"\x00\xff")}}},
+    ))
+    save_rcbf(tmp_path / "whole.rcbf", graph)
+    catalog = FileCatalog([tmp_path])
+    response = Executor(sources={"files": catalog}).execute(parse(
+        'FROM FILE("files", "root0/whole.rcbf") RETURN ARITY(CELL(1, 0)), COUNT(CELLS(1))'
+    ))
+    assert response.values == (3, 2)
+    with closing(rcdb.LocalStore(tmp_path / "records")) as store:
+        receipt = store.put("whole", catalog.load("root0/whole.rcbf"), analytics=False)
+    with closing(rcdb.LocalStore(tmp_path / "records")) as store:
+        restored = store.get_version("whole", receipt.version)
+        assert object_digest(restored) == object_digest(graph)
+        assert restored.relation_keys == graph.relation_keys
+        response = Executor(sources={"db": store}).execute(parse(
+            'FROM RCDB_GET($db, "whole") RETURN ARITY(CELL(1, 0)), COUNT(CELLS(1))'
+        ))
+        assert response.values == (3, 2)

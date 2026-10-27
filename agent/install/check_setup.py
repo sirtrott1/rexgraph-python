@@ -10,15 +10,16 @@ from pathlib import Path
 from importlib.metadata import PackageNotFoundError, version
 
 FEATURES = {
+    "SQL sources and RCDB import": ("sql", ("SQLAlchemy",)),
     "application server": ("server", ("fastapi", "uvicorn", "python-multipart", "httpx", "bcrypt", "limits")),
     "analysis": ("standard", ("scipy", "pandas")),
-    "schema and database connectors": ("standard", ("sqlglot", "sqlalchemy", "pymongo", "neo4j")),
+    "schema and database connectors": ("standard", ("sqlglot", "pymongo", "neo4j")),
     "object storage and signing": ("standard", ("fsspec", "cryptography")),
     "file formats": ("standard", ("pyarrow", "h5py", "zarr", "safetensors", "openpyxl")),
     "PDF and OCR bindings": ("standard", ("pymupdf", "pytesseract")),
     "model training": ("ml", ("torch", "transformers", "peft", "datasets", "accelerate", "sentencepiece")),
     "molecular inputs": ("molecules", ("rdkit",)),
-    "stored signature queries": ("analytics", ("duckdb", "polars")),
+    "stored signature queries": ("analytics", ("pyarrow", "polars")),
     "numerical baselines": ("baselines", ("scikit-learn", "lightgbm", ("xgboost", "xgboost-cpu"))),
     "LangChain": ("langchain", ("langchain", "langchain-core")),
     "LangGraph": ("langgraph", ("langgraph",)),

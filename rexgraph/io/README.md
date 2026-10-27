@@ -39,7 +39,8 @@ state identity.
 | Format | Use | Dependency |
 | --- | --- | --- |
 | RCBD | Native complex and temporal bundles | Core |
-| RCBF | Import of a supported current C0–C2 snapshot | Core |
+| RCBO | Complete ontology snapshot, selected anchor and source identity | Core |
+| RCBF | Complete canonical state in a sequential binary file; legacy snapshot import | Core |
 | Native JSON | Complete graph or temporal state in a versioned JSON envelope | Core |
 | safetensors | Native tensor state and model transport | safetensors |
 | HDF5 | Native graphs, arrays, caches and result groups | h5py |
@@ -55,12 +56,18 @@ container to preserve a complete complex. Arrow and Parquet coefficient
 columns preserve integer and rational kinds, presence and large integers;
 an undeclared float in an exact column requires an explicit conversion rule.
 
-RCBF is an import format; RCBD is a directory container. `load_rcbf(path)`
-preserves supported boundary, label, relation, face and boundary slot metadata.
-Save that graph with `save_rcbd` or put it into RCDB. Stored temporal states
-require `allow_current_snapshot=True` to request the current snapshot explicitly;
+`save_rcbf(path, graph)` writes complete canonical static or temporal state in
+an RCBF version 6 sequential file. `load_rcbf(path)` checks its framing, checksum
+and canonical state. RCBD uses addressable directory members for the same state.
+Both can be loaded, put into RCDB and queried through RCQL. Older RCBF readers
+that accept only versions 4 and 5 cannot read version 6. The version 6 byte budget
+defaults to 1 GiB; pass `max_bytes` to set an explicit different limit.
+
+Legacy RCBF versions 4 and 5 retain their snapshot import rules. Stored temporal
+states require `allow_current_snapshot=True` to request only the current snapshot;
 that option does not import their history. Mixed directedness, inexact C2
-coefficients, duplicate signal names and unclaimed timeless tails are rejected.
+coefficients, duplicate signal names and unclaimed timeless tails are rejected
+by that legacy importer.
 
 The C++ RFC formats use their own owning readers and admission limits. Generic
 `load` does not interpret `.rfcx`, `.rfcxs`, `.rfcxa` or `.rfcxg` as a Core
@@ -176,3 +183,25 @@ details.
 RCDB provides [versioned records](../../rcdb/README.md), and RCQL provides
 [portable query results](../../rcql/README.md#portable-exact-results). Both use
 the shared Core state codecs.
+
+## Ontology files
+
+`.rcbo` is the native container for an `OntologyState`. `save_ontology` and
+`load_ontology` retain the complete source, selected anchor, exact declarations
+and ontology identity. The current payload uses the complete RCBF state codec
+and needs no optional tensor backend. Declared legacy safetensors payloads
+require that backend when read and retain their original bytes.
+
+`write_rcbo(stream, ontology)` and `read_rcbo(stream)` support binary streams
+without seeking or closing the caller's stream. Framing includes the version,
+source codec, bounded lengths, identities and a checksum. The default whole-file
+limit is 256 MiB; `max_bytes` can lower it. Truncation, trailing data, checksum
+errors and unsupported versions fail before graph reconstruction.
+`save_rcbo` publishes atomically, preserving an existing file if writing fails.
+
+`save_ontology` also accepts ordinary complete graph containers such as RCBF,
+RCBD and safetensors. Use `load_ontology(..., anchor=(grade, index))` when the
+selected ontology is in an ordinary graph container. An RCBO file retains its
+own anchor. FileCatalog and Agent readers return its complete graph so existing
+query and analysis paths retain the ontology declaration. See the
+[ontology example](../README.md#ontology-snapshots).

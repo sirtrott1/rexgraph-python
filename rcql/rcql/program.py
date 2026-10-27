@@ -202,7 +202,11 @@ class Program:
                 if not isinstance(candidates, tuple):
                     candidates = (candidates,)
                 for signature in candidates:
-                    if signature.effects - {Effect.READ} or "train" in signature.requires:
+                    # These operators return immutable native-history children.
+                    # Publication is separate; runtime still requires train access.
+                    native_revision = name in {"ONTOLOGY_NATIVE_APPEND", "ONTOLOGY_NATIVE_ADD"}
+                    if (signature.effects - {Effect.READ}
+                            or ("train" in signature.requires and not native_revision)):
                         raise ValueError("reusable programs are read calculations; publish changes explicitly")
             known[step.name] = step
         outputs = tuple(self.outputs) or tuple((str(i), OutputRef(steps[-1].name, i))

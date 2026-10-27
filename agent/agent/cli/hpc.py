@@ -213,7 +213,7 @@ def generate_slurm_corpus(
 
         python << 'PYSCRIPT'
 from agent.corpus import CorpusBuilder
-from agent.server.persistence import save_document_rex, save_analysis_sql
+from agent.server.persistence import save_document_rex, save_analysis
 import os, time
 
 corpus = CorpusBuilder()
@@ -236,7 +236,7 @@ print("Built in %.1fs" % (time.time() - t0))
 for doc in corpus.documents:
     if doc.rex:
         save_document_rex("{workspace}", doc.doc_id, doc.rex)
-        save_analysis_sql("{workspace}", doc.doc_id, doc.rex, doc.analysis)
+        save_analysis("{workspace}", doc.doc_id, doc.rex, doc.analysis)
         print("  %s: %dV %dE" % (doc.doc_id, doc.rex.nV, doc.rex.nE))
 
 print("Saved to workspace: {workspace}")

@@ -2,64 +2,55 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 from fastapi.testclient import TestClient
 
 
-def _shop_db(path):
-    con = sqlite3.connect(path)
-    con.executescript(
-        "CREATE TABLE customers(id INTEGER PRIMARY KEY);"
-        "CREATE TABLE orders(id INTEGER PRIMARY KEY, "
-        "  customer_id INT REFERENCES customers(id));"
-        "CREATE TABLE order_items(order_id INT REFERENCES orders(id), "
-        "  product_id INT, PRIMARY KEY(order_id, product_id));")
-    con.executemany("INSERT INTO orders(id,customer_id) VALUES(?,0)",
-                    [(i,) for i in range(100)])
-    con.executemany("INSERT INTO order_items(order_id,product_id) VALUES(?,?)",
-                    [(i, i % 5) for i in range(400)])
-    con.commit(); con.close()
+def _record():
+    from rexgraph import RexGraph
+    from agent.rcdb import default_store
+    graph = RexGraph.from_cells([4, [[0, 1, 2], [2, 3]]])
+    default_store().put("source", graph)
+    return {"record_id": "source", "version": 1}
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    # isolate the app RCDB into a temp sqlite store for this test
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "rcdb.sqlite"))
-    import agent.server.routes.rcdb as rcdbroute
-    rcdbroute._STORE = None
+    # Isolate native record storage and workspace handles.
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "rcdb.sqlite"))
+    from agent import rcdb
+    monkeypatch.setenv("REXGRAPH_CONFIG_DIR", str(tmp_path / "config"))
+    rcdb.reset_default_store()
     from agent.server.app import app
-    # entered, so the app's lifespan runs and its shutdown disposes the SQL engines
+    from agent.server.auth import get_auth_manager
+    get_auth_manager().disable_auth(persist=False)
     with TestClient(app) as client:
         yield client
-    rcdbroute._STORE = None
+    rcdb.reset_default_store()
 
 
 def test_list_endpoint(client):
     r = client.get("/api/v1/connectors")
     assert r.status_code == 200
     names = {c["connector"] for c in r.json()["connectors"]}
-    assert {"SQLConnector", "WarehouseConnector", "GraphConnector"} <= names
+    assert {"RCDBConnector", "NativeFileConnector", "GraphConnector"} <= names
 
 
-def test_read_and_validate_endpoints(client, tmp_path):
-    dbf = str(tmp_path / "shop.db"); _shop_db(dbf)
-    uri = "sqlite:///" + dbf
-    r = client.post("/api/v1/connectors/read", json={"uri": uri, "weights": True})
-    assert r.status_code == 200
-    body = r.json()
-    assert body["nV"] == 3 and body["nE"] == 2 and body["weighted"]
-    r = client.post("/api/v1/connectors/validate", json={"uri": uri})
-    assert r.status_code == 200 and r.json()["ok"] is True
+def test_read_and_validate_endpoints(client):
+    source = _record()
+    result = client.post("/api/v1/connectors/read", json={"scheme": "rcdb", "source": source})
+    assert result.status_code == 200, result.text
+    assert (result.json()["nV"], result.json()["nE"]) == (4, 2)
+    result = client.post("/api/v1/connectors/validate", json={"scheme": "rcdb", "source": source})
+    assert result.status_code == 200 and result.json()["ok"], result.text
 
 
-def test_ingest_lands_in_rcdb(client, tmp_path):
-    dbf = str(tmp_path / "shop.db"); _shop_db(dbf)
-    r = client.post("/api/v1/connectors/ingest",
-                    json={"uri": "sqlite:///" + dbf, "id": "shop", "tags": ["demo"]})
-    assert r.status_code == 200 and r.json()["stored_as"] == "shop"
-    ids = [x["id"] for x in client.get("/api/v1/db/list").json()["records"]]
+def test_ingest_lands_in_rcdb(client):
+    source = _record()
+    result = client.post("/api/v1/connectors/ingest", json={"scheme": "rcdb", "source": source,
+                         "id": "shop", "tags": ["demo"]})
+    assert result.status_code == 200 and result.json()["stored_as"] == "shop", result.text
+    ids = [r["id"] for r in client.get("/api/v1/db/list").json()["records"]]
     assert "shop" in ids
 
 

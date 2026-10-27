@@ -165,73 +165,13 @@ def test_harness_fails_capability_overclaim():
     assert not chk.passed
 
 
-# SQL connector
-
-import os
-import sqlite3
-import tempfile
-
-
-def _make_shop_db():
-    dbf = tempfile.mktemp(suffix=".db")
-    con = sqlite3.connect(dbf)
-    con.executescript(
-        "CREATE TABLE customers(id INTEGER PRIMARY KEY);"
-        "CREATE TABLE products(id INTEGER PRIMARY KEY);"
-        "CREATE TABLE orders(id INTEGER PRIMARY KEY, "
-        "  customer_id INT REFERENCES customers(id));"
-        "CREATE TABLE order_items(order_id INT REFERENCES orders(id), "
-        "  product_id INT REFERENCES products(id), "
-        "  PRIMARY KEY(order_id, product_id));")
-    con.executemany("INSERT INTO customers(id) VALUES(?)", [(i,) for i in range(50)])
-    con.executemany("INSERT INTO products(id) VALUES(?)", [(i,) for i in range(20)])
-    con.executemany("INSERT INTO orders(id,customer_id) VALUES(?,0)",
-                    [(i,) for i in range(200)])
-    con.executemany("INSERT INTO order_items(order_id,product_id) VALUES(?,?)",
-                    [(i, i % 20) for i in range(800)])
-    con.commit(); con.close()
-    return dbf
-
-
-class TestSQLConnector:
-    def test_reflects_topology_modality_and_passes_harness(self):
-        from agent.connectors.sql import SQLConnector
-        dbf = _make_shop_db()
-        try:
-            conn = SQLConnector(with_weights=True)
-            uri = "sqlite:///" + dbf
-            rex, meta = conn.read(uri)
-            assert set(meta["vertex_labels"]) == {
-                "customers", "products", "orders", "order_items"}
-            assert ("orders", "customers") in meta["edges"]
-            assert meta["nE"] == 3
-            # every edge has FK modality
-            assert len(meta["modality"]) == meta["nE"]
-            assert all(set(m) == {"nullable", "identifying", "on_delete"}
-                       for m in meta["modality"])
-            # order_items -> products is identifying (FK cols ⊆ composite PK)
-            oi_edges = [i for i, (a, b) in enumerate(meta["edges"])
-                        if a == "order_items"]
-            assert any(meta["modality"][i]["identifying"] for i in oi_edges)
-            # cardinality weights: the 800 row junction outweighs the rest
-            assert max(meta["weights"]) == 800.0
-            # secrets never ride along in provenance
-            assert "@" not in meta["source"]
-            from agent.connectors.validate import validate_connector
-            assert validate_connector(conn, uri).ok
-        finally:
-            os.unlink(dbf)
-
-    def test_weights_off_by_default(self):
-        from agent.connectors.sql import SQLConnector
-        dbf = _make_shop_db()
-        try:
-            conn = SQLConnector()                       # no weights
-            assert conn.capabilities().weights is False
-            _, meta = conn.read("sqlite:///" + dbf)
-            assert meta.get("weights") is None
-        finally:
-            os.unlink(dbf)
+def test_sql_sources_remain_optional_and_do_not_open_on_discovery():
+    from agent.connectors import open_connector
+    from agent.connectors.sql import SQLConnector
+    from agent.connectors.warehouse import WarehouseConnector
+    assert isinstance(open_connector("postgresql://host/database"),SQLConnector)
+    assert isinstance(open_connector("snowflake://host/database"),WarehouseConnector)
+    assert isinstance(open_connector("sqlite"),SQLConnector)
 
 
 # document / semantic / generic / skeletons / registry
@@ -272,17 +212,6 @@ def test_generic_connector_weights_and_cycle():
     assert validate_connector(conn, rows).ok
 
 
-def test_warehouse_connector_is_sql_shape_with_dialects():
-    from agent.connectors.warehouse import WarehouseConnector
-    caps = WarehouseConnector().capabilities()
-    assert "snowflake" in caps.schemes and "bigquery" in caps.schemes
-    dbf = _make_shop_db()
-    try:
-        assert validate_connector(WarehouseConnector(), "sqlite:///" + dbf).ok
-    finally:
-        os.unlink(dbf)
-
-
 def test_graph_connector_in_memory_stand_in():
     conn = open_connector("neo4j")
     g = {"nodes": ["Person", "Company", "Address"],
@@ -307,18 +236,15 @@ def test_registry_routes_schemes_and_rejects_unknown():
     from agent.connectors.generic import GenericConnector
     from agent.connectors.graph import GraphConnector
     from agent.connectors.semantic import SemanticConnector
-    from agent.connectors.sql import SQLConnector
     from agent.connectors.stream import StreamConnector
-    from agent.connectors.warehouse import WarehouseConnector
-    assert isinstance(open_connector("postgresql://h/db"), SQLConnector)
-    assert isinstance(open_connector("snowflake://a/db"), WarehouseConnector)
     assert isinstance(open_connector("mongodb://h/db"), DocumentConnector)
     assert isinstance(open_connector("ontology"), SemanticConnector)
     assert isinstance(open_connector("neo4j://h"), GraphConnector)
     assert isinstance(open_connector("kafka://h"), StreamConnector)
     assert isinstance(open_connector("edges"), GenericConnector)
-    # kwargs pass through; SQLAlchemy driver suffix is stripped
-    assert open_connector("sqlite:///x", with_weights=True).capabilities().weights
-    assert isinstance(open_connector("postgresql+psycopg2://h/db"), SQLConnector)
+    from agent.connectors.records import RCDBConnector, NativeFileConnector
+    assert isinstance(open_connector("rcdb"), RCDBConnector)
+    assert isinstance(open_connector("rcbf"), NativeFileConnector)
+    assert isinstance(open_connector("rcbd"), NativeFileConnector)
     with pytest.raises(ConnectorError):
         open_connector("ftp://nope")

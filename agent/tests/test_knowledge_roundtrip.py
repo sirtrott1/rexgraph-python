@@ -83,7 +83,7 @@ ALL_FILES = {**ONTOLOGY_FILES, **SCIENCE_FILES}
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "r.sqlite"))
     from agent.rcdb import default_store, reset_default_store
     reset_default_store()
     yield default_store()
@@ -313,7 +313,7 @@ def test_the_study_feeds_trustgraph(study):
 
 
 def test_the_study_feeds_a_session(study, tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "s.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "s.sqlite"))
     from agent.rcdb import reset_default_store
     reset_default_store()
     from agent.server.app import get_store
@@ -418,7 +418,7 @@ def test_features_from_two_files_stack(tmp_path):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "r.sqlite"))
     from agent.rcdb import reset_default_store
     reset_default_store()
     from agent.server.app import app

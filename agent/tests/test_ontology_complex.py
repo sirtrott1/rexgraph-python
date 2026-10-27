@@ -53,7 +53,7 @@ class TestOntologyMapping:
 def client(tmp_path_factory):
     from fastapi.testclient import TestClient
     cfg = tmp_path_factory.mktemp("ontcfg")
-    os.environ["REXGRAPH_RCDB_URI"] = f"sqlite:///{cfg / 'rcdb.sqlite'}"
+    os.environ["REXGRAPH_RCDB_URI"] = f"local://{cfg / 'rcdb.sqlite'}"
     import agent.server.routes.rcdb as R
     R._STORE = None
     from agent.server.app import app

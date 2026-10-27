@@ -26,7 +26,7 @@ DOC = ("Alpha connects beta. Beta connects gamma. Gamma connects alpha. "
 @pytest.fixture
 def rc(tmp_path, monkeypatch):
     """A RexClient whose httpx calls land on the in process app."""
-    monkeypatch.setenv("REXGRAPH_RCDB_URI", "sqlite:///" + str(tmp_path / "r.sqlite"))
+    monkeypatch.setenv("REXGRAPH_RCDB_URI", "local://" + str(tmp_path / "r.sqlite"))
     from agent.rcdb import reset_default_store
     reset_default_store()
     from agent.server.app import app

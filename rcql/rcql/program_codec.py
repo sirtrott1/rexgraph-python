@@ -29,6 +29,12 @@ def encode(value, depth=0):
         return {"literal": "float", "value": value.hex()}
     if type(value) is bytes:
         return {"literal": "bytes", "value": base64.b64encode(value).decode("ascii")}
+    from .c_workflow import CValue
+    if type(value) is CValue:
+        return {"literal":"c-value-declaration","value":[base64.b64encode(value.workflow.data).decode("ascii"),value.index]}
+    from .declaration_codec import declaration_types
+    if type(value) in declaration_types().values():
+        return {"literal": "native-declaration", "value": [type(value).__name__, base64.b64encode(value.data).decode("ascii")]}
     if type(value) in (tuple, list):
         return {"literal": type(value).__name__, "value": [encode(v, depth+1) for v in value]}
     if type(value) is dict and all(type(k) is str for k in value):
@@ -50,6 +56,17 @@ def decode(record, depth=0):
     if set(record) != {"literal", "value"}:
         raise ValueError("invalid program literal")
     kind, value = record["literal"], record["value"]
+    if kind == "c-value-declaration":
+        from .c_workflow import CWorkflow
+        if type(value) is not list or len(value)!=2 or type(value[0]) is not str or type(value[1]) is not int:
+            raise ValueError("invalid prospective C value declaration")
+        return CWorkflow.from_bytes(base64.b64decode(value[0],validate=True)).value(value[1])
+    if kind == "native-declaration":
+        from .declaration_codec import declaration_types
+        if (type(value) is not list or len(value) != 2 or type(value[0]) is not str
+                or value[0] not in declaration_types() or type(value[1]) is not str):
+            raise ValueError("unknown finite native declaration")
+        return declaration_types()[value[0]](base64.b64decode(value[1], validate=True))
     if kind == "NoneType" and value is None:
         return None
     if kind == "bool" and type(value) is bool:
@@ -130,8 +147,10 @@ def _implementation_inputs():
     import importlib.util
     from pathlib import Path
     files = []
-    for package in ("rexgraph", "rcql", "rcdb"):
+    for package in ("rexgraph", "rcql", "rcdb", "rexgraph_temporal"):
         spec = importlib.util.find_spec(package)
+        if spec is None and package == "rexgraph_temporal":
+            continue
         if spec is None or spec.origin is None:
             raise RuntimeError("program implementation package is not installed")
         root = Path(spec.origin).parent

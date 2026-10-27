@@ -86,7 +86,7 @@ def _reference(source):
 def model_init(source, adapter="native_field", configuration=None, axes=None, optimizer=None, seed=0):
     from rexgraph.model_runtime import native_model
     config = dict(configuration or {})
-    if adapter in {"cpp_conditioned_occurrence_program", "cpp_conditioned_field_family", "cpp_conditioned_field_program", "cpp_field", "cpp_integer", "cpp_metric", "cpp_perceptron", "cpp_binary_gate", "cpp_correspondence", "cpp_context_catalog", "cpp_relation_response", "cpp_channels", "cpp_relational_sections", "cpp_local_sections", "cpp_stalk_fields", "cpp_stalk_sections", "cpp_stalk_boundary", "cpp_graded_stalk_transport", "cpp_stalk_transport", "cpp_stalk_pattern_bank", "cpp_relational_field_program", "cpp_relational_finite_field", "cpp_relational_literal_finite_field", "cpp_relational_finite_operator", "cpp_relational_known_product", "cpp_stalk_objective", "cpp_algebraic", "cpp_algebraic_grade", "cpp_algebraic_grade_metric"}:
+    if adapter in {"cpp_assignment_evidence", "cpp_finite_search", "cpp_conditioned_occurrence_program", "cpp_conditioned_field_family", "cpp_conditioned_field_program", "cpp_field", "cpp_integer", "cpp_metric", "cpp_perceptron", "cpp_binary_gate", "cpp_correspondence", "cpp_context_catalog", "cpp_relation_response", "cpp_channels", "cpp_relational_sections", "cpp_local_sections", "cpp_stalk_fields", "cpp_stalk_sections", "cpp_stalk_boundary", "cpp_graded_stalk_transport", "cpp_stalk_transport", "cpp_stalk_pattern_bank", "cpp_relational_field_program", "cpp_relational_finite_field", "cpp_relational_literal_finite_field", "cpp_relational_finite_operator", "cpp_relational_known_product", "cpp_stalk_objective", "cpp_algebraic", "cpp_algebraic_grade", "cpp_algebraic_grade_metric"}:
         if optimizer is not None or axes is not None or seed != 0:
             raise ValueError("native profiles declare no neural optimizer, feature axes or random seed")
         data = source_for(source, algebraic_snapshot=adapter in {"cpp_algebraic_grade", "cpp_algebraic_grade_metric"},
@@ -152,6 +152,12 @@ def model_init(source, adapter="native_field", configuration=None, axes=None, op
             from rexgraph.source_binding import CppSourceReference as Reference
         elif adapter == "cpp_relational_literal_finite_field":
             from rexgraph.cpp_relational_literal_finite_field import enable_literal_finite_field_provider as enable
+            from rexgraph.source_binding import CppSourceReference as Reference
+        elif adapter == "cpp_assignment_evidence":
+            from rexgraph.cpp_assignment import enable_assignment_provider as enable
+            from rexgraph.source_binding import CppSourceReference as Reference
+        elif adapter == "cpp_finite_search":
+            from rexgraph.cpp_finite_search import enable_finite_search_provider as enable
             from rexgraph.source_binding import CppSourceReference as Reference
         elif adapter == "cpp_relational_finite_field":
             from rexgraph.cpp_relational_finite_field import enable_finite_field_provider as enable
@@ -398,7 +404,9 @@ def model_finite_complete(source, output, ordinal, values, parameter_setting, ch
 
 
 def model_finite_branches(source, output, begin=0, count=16, execution_context=None):
-    if output.method in {"exact-available-relational-literal-finite-field-family-v1", "exact-available-relational-literal-finite-field-evaluation-v1"}:
+    if output.method == "exact-available-finite-projection-replay-v1":
+        from rexgraph.cpp_finite_search import finite_search_branches as branches
+    elif output.method in {"exact-available-relational-literal-finite-field-family-v1", "exact-available-relational-literal-finite-field-evaluation-v1"}:
         from rexgraph.cpp_relational_literal_finite_field import literal_finite_field_branches as branches
     elif output.method in {"exact-available-relational-finite-operator-family-v1", "exact-available-relational-finite-operator-evaluation-v1"}:
         from rexgraph.cpp_relational_finite_operator import finite_operator_branches as branches
@@ -420,6 +428,21 @@ def model_local(source, output, node, declaration, readout, origins, execution_c
 
 
 def model_values(source, output, execution_context=None):
+    if output.method == "exact-conditioned-assignment-response-v1":
+        from rexgraph.cpp_assignment import read_assignment_result
+        output.source.bind(source_for(source, execution_context=execution_context))
+        value = read_assignment_result(output, execution_context=execution_context)
+        record_method("conditioned-native-assignment-metadata", arithmetic="rational", model_digest=output.model_digest)
+        return dict(model=value.model(execution_context).inspect(execution_context),
+            response=value.inspect(execution_context), interpretation="conditioned-correlated-native-family",
+            executed_external_worker=False)
+    if output.method == "exact-available-finite-projection-replay-v1":
+        from rexgraph.cpp_finite_search import read_finite_search_result
+        output.source.bind(source_for(source, execution_context=execution_context))
+        result = read_finite_search_result(output, execution_context=execution_context)
+        record_method("native-correlated-finite-projection-metadata", arithmetic="rational", model_digest=output.model_digest)
+        return dict(status=result['status'], image=None if result['image'] is None else result['image'].inspect(),
+                    work=result['work'], reconstruction=output.execution_receipt['reconstruction'])
     if output.method == "exact-conditioned-occurrence-program-v1":
         from rexgraph.cpp_conditioned_occurrence_program import read_conditioned_occurrence_result
         output.source.bind(source_for(source, execution_context=execution_context))
@@ -640,7 +663,22 @@ def model_info(source, state, execution_context=None):
             "digest": state.coefficient_digest, "parent": state.parent, "arithmetic": state.arithmetic,
             "source": state.source.as_record(), "resumable": "optimizer" in state.payload,
             "axes": tuple((a.name, a.keys) for a in (state.space, *state.output_axes))}
-    if state.adapter == "cpp_relational_known_product":
+    if state.adapter == "cpp_assignment_evidence":
+        from rexgraph.cpp_assignment import prepare_assignment_model
+        native = prepare_assignment_model(state, source_for(source, state, execution_context=execution_context), execution_context=execution_context)
+        value.update(profile=state.configuration['profile'], native=native.inspect(execution_context),
+            operations=('create', 'prepare', 'infer', 'train'), trainable=True,
+            storage='immutable-native-assignment-evidence', retains_correlated_families=True,
+            availability='independent-native-context-required')
+    elif state.adapter == "cpp_finite_search":
+        from rexgraph.cpp_finite_search import prepare_finite_search_model
+        prepared = prepare_finite_search_model(state, source_for(source, state, execution_context=execution_context), execution_context=execution_context)
+        value.update(profile=state.configuration['profile'], recipe=state.configuration['recipe'],
+            operations=('create', 'prepare', 'infer'), trainable=False, source_backed=True,
+            context_operations=('create', 'prepare', 'infer'), availability='independent-native-context-required',
+            preparation=prepared.preparation, propagation=prepared.propagation,
+            storage='admitted-source-and-complete-request-reexecution', retains_correlated_families=True)
+    elif state.adapter == "cpp_relational_known_product":
         value.update(profile=state.configuration["profile"],program_sha256=state.configuration["program_sha256"],
                      operations=("create","prepare","infer","train"),trainable=True,source_backed=True,
                      storage="immutable-native-compound-and-field-archives",retains_correlated_families=True,

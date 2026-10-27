@@ -91,7 +91,7 @@ def task_binding_origin_payload(binding,response,*,limits=_LIMITS,max_bytes=256*
     return <bytes>image
 
 cdef class _Sink:
-    cdef object write,error
+    pass
 
 cdef int _write(void* context,const char* data,size_t count) noexcept with gil:
     cdef _Sink sink=<_Sink><object>context

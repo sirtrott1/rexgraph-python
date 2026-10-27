@@ -1,5 +1,4 @@
 """agent.data_complex: records as a relational complex: clusters, outliers, centrality."""
-import sqlite3
 
 from agent.agentic_db import AgenticDB
 from agent.data_complex import analyze_rows, rows_to_complex
@@ -27,17 +26,12 @@ def test_no_shared_values_all_outliers():
 
 
 def test_agentic_db_data_complex(tmp_path):
-    path = tmp_path / "shop.db"
-    con = sqlite3.connect(path)
-    con.executescript("""
-        CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER);
-        INSERT INTO orders VALUES (1,10),(2,10),(3,10),(4,20),(5,30);
-    """)
-    con.commit(); con.close()
-    # AgenticDB owns a connection pool, so the test that opens it closes it
-    with AgenticDB(f"sqlite:///{path}") as db:
-        r = db.data_complex("orders", link_on="customer_id", id_col="id")
-        assert r["n_rows"] == 5
-        assert len(r["clusters"][0]) == 3                        # customer 10's three orders
-        assert {"4", "5"} <= set(r["outliers"])                 # customers 20 and 30: one order each
-        assert r["source"] == "orders"
+    from agent import rcdb
+    store = rcdb.LocalStore(tmp_path / "records")
+    rows = [{"id": i, "customer_id": c} for i,c in [(1,10),(2,10),(3,10),(4,20),(5,30)]]
+    store.put_record("orders", rows, expected_version=0)
+    with AgenticDB(store=store) as db:
+        result = db.data_complex("orders", link_on="customer_id", id_col="id")
+        assert result["n_rows"] == 5 and len(result["clusters"][0]) == 3
+        assert {"4", "5"} <= set(result["outliers"])
+    store.close()

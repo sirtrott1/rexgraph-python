@@ -24,6 +24,7 @@ from .ast import (
 from .operators import get_operator
 from .optimizer import Rewrite, optimize
 from .types import Exactness
+from .formatting import format_expr
 
 
 @dataclass(frozen=True)
@@ -479,7 +480,7 @@ class Executor:
             with capture_methods(policy_digest=expression.call.binding.ref.policy_digest,
                                  policy=policy, artifact_services=self.artifacts, binding=expression.call.binding) as methods:
                 value = get_operator(node.operator).fn(self._carrier_source(raw, args, node.operator), *args)
-            if policy is not None and node.operator in {"RCDB_LIST", "RCDB_SEARCH", "RCDB_HISTORY"}:
+            if policy is not None and node.operator in {"RCDB_LIST", "RCDB_SEARCH", "RCDB_HISTORY", "RCDB_SELECT"}:
                 value = policy.project_record(value)
             if self.evidence is not None:
                 self.evidence.validate_values((args, value))
@@ -627,32 +628,6 @@ class Executor:
             dag.outputs, phrase.returns, logical_returns, exactness, dag.aliases, strict=True))
         return Result(values, tuple(rewrites), plan, exactness, serialized, provenance, tuple(observations), dag.aliases)
 
-
-
-def format_expr(expr: Expr) -> str:
-    """Return a compact RCQL expression string."""
-    if isinstance(expr, Comparison):
-        return f"({format_expr(expr.left)} {expr.operation} {format_expr(expr.right)})"
-    if isinstance(expr, StructuralEdit):
-        return f"{format_expr(expr.state)} {expr.operation} {format_expr(expr.value)}"
-    if isinstance(expr, Alias):
-        return f"{format_expr(expr.value)} AS {expr.name}"
-    if isinstance(expr, Member):
-        return f"{format_expr(expr.value)}.{expr.name}"
-    if isinstance(expr, ListExpr):
-        return "[" + ", ".join(format_expr(item) for item in expr.items) + "]"
-    if isinstance(expr, Literal):
-        if isinstance(expr.value, Fraction):
-            return f"{expr.value.numerator}/{expr.value.denominator}"
-        from .planning import _plain_literal
-        return repr(_plain_literal(expr.value))
-    if isinstance(expr, Parameter):
-        return "$" + expr.name
-    if isinstance(expr, Reference):
-        return expr.name
-    if isinstance(expr, Call):
-        return f"{expr.name}({', '.join(format_expr(a) for a in expr.args)})"
-    return repr(expr)
 
 
 def value_exactness(value: Any) -> Exactness:

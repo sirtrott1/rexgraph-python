@@ -2,70 +2,48 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 from agent.cli import connect as cli
 from agent.connectors import service as svc
 
 
-def _shop_db(path):
-    con = sqlite3.connect(path)
-    con.executescript(
-        "CREATE TABLE customers(id INTEGER PRIMARY KEY);"
-        "CREATE TABLE orders(id INTEGER PRIMARY KEY, "
-        "  customer_id INT REFERENCES customers(id));"
-        "CREATE TABLE order_items(order_id INT REFERENCES orders(id), "
-        "  product_id INT, PRIMARY KEY(order_id, product_id));")
-    con.executemany("INSERT INTO customers(id) VALUES(?)", [(i,) for i in range(30)])
-    con.executemany("INSERT INTO orders(id,customer_id) VALUES(?,0)",
-                    [(i,) for i in range(100)])
-    con.executemany("INSERT INTO order_items(order_id,product_id) VALUES(?,?)",
-                    [(i, i % 5) for i in range(400)])
-    con.commit(); con.close()
+def _shop_file(path):
+    from rexgraph import RexGraph
+    from rexgraph.io import save
+    value = RexGraph.from_cells([4, [[0, 1, 2], [2, 3]]])
+    save(path, value, format="rcbd")
+    return "rcbd://" + str(path)
 
 
 # service layer
 
 def test_list_connectors_groups_and_reports_capabilities():
-    rows = svc.list_connectors()
-    by = {r["connector"]: r for r in rows}
-    assert "SQLConnector" in by and "WarehouseConnector" in by
-    sql = by["SQLConnector"]
-    schemes = {s["scheme"] for s in sql["schemes"]}
-    assert {"sqlite", "postgresql", "mysql"} <= schemes
-    assert sql["supports"]["modality"] and sql["supports"]["faces"]
-    # sqlite driver is present in env; every scheme carries a driver flag
-    assert all("driver_available" in s for s in sql["schemes"])
-    assert next(s for s in sql["schemes"] if s["scheme"] == "sqlite")["driver_available"]
+    by = {r["connector"]: r for r in svc.list_connectors()}
+    assert {"NativeFileConnector", "RCDBConnector"} <= by.keys()
+    assert {"SQLConnector", "WarehouseConnector"} <= by.keys()
+    assert {s["scheme"] for s in by["NativeFileConnector"]["schemes"]} == {"rcbd", "rcbf"}
+    assert all(s["driver_available"] for s in by["NativeFileConnector"]["schemes"])
 
 
-def test_driver_status_flags_missing_with_hint():
-    inmem = svc.driver_status("ontology")
-    assert inmem["available"] and inmem["hint"] == ""
-    wh = svc.driver_status("snowflake")
-    assert wh["available"] is False and "warehouse" in wh["hint"]
+def test_native_drivers_need_no_sql_extras():
+    for scheme in ("ontology", "rcdb", "rcbd", "rcbf"):
+        assert svc.driver_status(scheme) == {"available": True, "hint": ""}
+    assert svc.driver_status("snowflake")["available"] is False
 
 
 def test_read_validate_ingest_roundtrip(tmp_path):
-    dbf = str(tmp_path / "shop.db")
-    _shop_db(dbf)
-    uri = "sqlite:///" + dbf
-
-    summ = svc.read(uri, with_weights=True)
-    assert summ["nV"] == 3 and summ["nE"] == 2 and summ["weighted"]
-
-    assert svc.validate(uri).ok
-
-    store = "sqlite:///" + str(tmp_path / "rcdb.sqlite")
-    out = svc.ingest(uri, "shop", store_uri=store, tags=["demo"])
-    assert out["stored_as"] == "shop"
-    # persisted structure is retrievable from a freshly opened store
+    uri = _shop_file(tmp_path / "source.rcbd")
+    summary = svc.read(uri)
+    assert (summary["nV"], summary["nE"]) == (4, 2)
+    report = svc.validate(uri)
+    assert report.ok, str(report)
+    destination = "local://" + str(tmp_path / "records")
+    assert svc.ingest(uri, "shop", store_uri=destination, tags=["demo"])["stored_as"] == "shop"
     from contextlib import closing
-
     from agent.rcdb import open_store
-    with closing(open_store(store, **({"read_only": False} if "://" not in store or store.startswith(("file://", "rex://")) else {}))) as reopened:      # the test opens it, the test closes it
-        got = reopened.get("shop")
-    assert got is not None and got.nV == 3 and got.nE == 2
+    from rexgraph.io import load
+    from rexgraph.object_identity import object_digest
+    with closing(open_store(destination)) as reopened:
+        assert object_digest(reopened.get("shop")) == object_digest(load(tmp_path / "source.rcbd"))
 
 
 def test_read_in_memory_shape():
@@ -78,37 +56,55 @@ def test_read_in_memory_shape():
 def test_cli_list_runs(capsys):
     assert cli.main(["list"]) == 0
     out = capsys.readouterr().out
-    assert "SQLConnector" in out and "driver missing" in out
+    assert "NativeFileConnector" in out and "RCDBConnector" in out
+    assert "SQLConnector" in out
 
 
 def test_cli_read_and_validate(tmp_path, capsys):
-    dbf = str(tmp_path / "shop.db")
-    _shop_db(dbf)
-    uri = "sqlite:///" + dbf
-    assert cli.main(["read", uri, "--weights"]) == 0
-    assert "nV=3" in capsys.readouterr().out
-    assert cli.main(["validate", uri]) == 0        # PASS -> exit 0
+    uri = _shop_file(tmp_path / "source.rcbd")
+    assert cli.main(["read", uri]) == 0
+    assert "nV=4" in capsys.readouterr().out
+    assert cli.main(["validate", uri]) == 0
 
 
 def test_cli_ingest(tmp_path):
-    dbf = str(tmp_path / "shop.db")
-    _shop_db(dbf)
-    store = "sqlite:///" + str(tmp_path / "rcdb.sqlite")
-    assert cli.main(["ingest", "sqlite:///" + dbf, "--store", store,
-                     "--id", "shop", "--tags", "a,b"]) == 0
+    uri = _shop_file(tmp_path / "source.rcbd")
+    destination = "local://" + str(tmp_path / "records")
+    assert cli.main(["ingest", uri, "--store", destination, "--id", "shop", "--tags", "a,b"]) == 0
     from contextlib import closing
-
     from agent.rcdb import open_store
-    with closing(open_store(store, **({"read_only": False} if "://" not in store or store.startswith(("file://", "rex://")) else {}))) as reopened:
-        assert reopened.get("shop") is not None
+    with closing(open_store(destination)) as store:
+        assert store.get("shop").nE == 2
 
 
 def test_cli_resolves_saved_connection(tmp_path, monkeypatch):
-    # a saved connection name resolves to its URI via the SecretStore
-    secrets_file = tmp_path / "conns.json"
-    monkeypatch.setenv("REXGRAPH_SECRETS_URI", "file://" + str(secrets_file))
+    monkeypatch.setenv("REXGRAPH_SECRETS_URI", "file://" + str(tmp_path / "conns.json"))
     from agent.secrets import open_secret_store
-    dbf = str(tmp_path / "shop.db")
-    _shop_db(dbf)
-    open_secret_store().put("shopdb", "sqlite:///" + dbf, "sql")
-    assert cli._resolve("shopdb") == "sqlite:///" + dbf
+    uri = _shop_file(tmp_path / "source.rcbd")
+    open_secret_store().put("shop", uri, "rcbd")
+    assert cli._resolve("shop") == uri
+
+
+def test_rcdb_ingest_uses_checked_selected_version_copy(tmp_path, monkeypatch):
+    from contextlib import closing
+    from agent import rcdb
+    from rexgraph import RexGraph
+    from rexgraph.object_identity import object_digest
+    with closing(rcdb.LocalStore(str(tmp_path / "from"))) as source, \
+         closing(rcdb.LocalStore(str(tmp_path / "to"))) as destination:
+        old = RexGraph.from_cells([4, [[0, 1, 2], [2, 3]]])
+        source.put("original", old, tags=["retained"], valid_from=10.0, valid_to=20.0)
+        source.put("original", RexGraph.from_cells([2, [[0, 1]]]))
+        actual = rcdb.copy_record
+        calls = []
+        def copy(*args, **kwargs):
+            calls.append((args[2].id, args[2].version))
+            return actual(*args, **kwargs)
+        monkeypatch.setattr(rcdb, "copy_record", copy)
+        result = svc.ingest("rcdb", "copied", store=destination,
+            source={"record_id": "original", "version": 1, "store": source})
+        assert calls == [("original", 1)] and result["stored_as"] == "copied"
+        selected = destination.read_record("copied")
+        assert selected.record.valid_from == 10.0 and selected.record.valid_to == 20.0
+        assert selected.record.signature["tags"] == ["retained"]
+        assert object_digest(selected.value) == object_digest(old)

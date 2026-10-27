@@ -16,7 +16,7 @@ function authHeaders(){
 // ── API ──
 function api(p,o){
   o=o||{};o.headers=Object.assign({},o.headers||{},authHeaders());
-  return fetch("/api"+p,o).then(function(r){
+  return fetch((p.indexOf("/rex/v1/")===0?"":"/api")+p,o).then(function(r){
     if(r.status===401){if(_onAuthFail)_onAuthFail();throw new Error("Authentication required")}
     if(!r.ok)return r.json().catch(function(){return{}}).then(function(d){throw new Error(d.detail||d.error||r.statusText)});
     return r.json().then(function(d){if(d&&d.error)throw new Error(d.error);return d})})}
@@ -31,6 +31,7 @@ function fpost(p,fd){
 function fmt(v,n){return v!=null?(typeof v==="number"?v.toFixed(n||4):String(v)):"-"}
 function pct(v){return v!=null?(v*100).toFixed(1)+"%":"-"}
 function downloadJSON(d,f){var b=new Blob([JSON.stringify(d,null,2)],{type:"application/json"});var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download=f||"export.json";a.click();URL.revokeObjectURL(u)}
+function authDownload(p,name){return fetch("/api"+p,{headers:authHeaders()}).then(function(r){if(!r.ok)return r.json().then(function(d){throw new Error(d.detail||"Download failed")});return r.blob()}).then(function(b){var u=URL.createObjectURL(b),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(u)})}
 function copyJSON(d){navigator.clipboard.writeText(JSON.stringify(d,null,2)).catch(function(){})}
 function kc(k){return k>=0.7?"kappa-high":k>=0.4?"kappa-mid":"kappa-low"}
 
@@ -1599,7 +1600,7 @@ function Schema(){
   var st=useState(""),storeId=st[0],setSt=st[1];
   var dl=useState(""),dialect=dl[0],setDl=dl[1];
   var sr=useState(null),strain=sr[0],setSr=sr[1];
-  function schemaBody(){var body={};if(fmt==="ddl"){body.ddl=txt;if(dialect)body.dialect=dialect;}else if(fmt==="connection")body.connection=txt.trim();else if(fmt==="mongo"){try{body.mongo=JSON.parse(txt)}catch(x){setE("Invalid Mongo JSON");return null}}else{try{body.spec=JSON.parse(txt)}catch(x){setE("Invalid JSON spec");return null}}return body}
+  function schemaBody(){var body={};if(fmt==="ddl"){body.ddl=txt;if(dialect)body.dialect=dialect;}else if(fmt==="mongo"){try{body.mongo=JSON.parse(txt)}catch(x){setE("Invalid Mongo JSON");return null}}else{try{body.spec=JSON.parse(txt)}catch(x){setE("Invalid JSON spec");return null}}return body}
   function analyze(){setE("");setRs(null);setSr(null);var body=schemaBody();if(!body)return;if(storeId.trim())body.store_id=storeId.trim();jpost("/v1/schema/analyze",body).then(setRs).catch(function(x){setE(x.message)})}
   function computeStrain(){setE("");setSr(null);var body=schemaBody();if(!body)return;jpost("/v1/schema/strain",body).then(setSr).catch(function(x){setE(x.message)})}
   var li=useState(null),lint=li[0],setLi=li[1];
@@ -1610,7 +1611,7 @@ function Schema(){
   function computeFaces(){setE("");setFc(null);var body=schemaBody();if(!body)return;jpost("/v1/schema/faces",body).then(setFc).catch(function(x){setE(x.message)})}
   var SEVCOLOR={high:"fail",medium:"gold",low:"neutral",info:"neutral"};
   return h(TplReport,{title:h("span",{className:"lbl-help"},"Schema & Ontology Diagnosis",h(Help,null,"Tables are cells and foreign keys are typed directional relations, so the schema is analysed as a complex."))},h(Err,{msg:err}),h(Card,{title:"Input"},
-      h("div",{className:"input-row",style:{marginBottom:6}},h("label",{className:"muted",style:{width:60}},"Format"),h("select",{className:"input",style:{width:220},value:fmt,onChange:function(ev){setFmt(ev.target.value)}},h("option",{value:"ddl"},"SQL DDL (CREATE TABLE…)"),h("option",{value:"json"},"JSON spec"),h("option",{value:"mongo"},"MongoDB (sample docs)"),h("option",{value:"connection"},"Live DB (SQLAlchemy URL)")),
+      h("div",{className:"input-row",style:{marginBottom:6}},h("label",{className:"muted",style:{width:60}},"Format"),h("select",{className:"input",style:{width:220},value:fmt,onChange:function(ev){setFmt(ev.target.value)}},h("option",{value:"ddl"},"SQL DDL (CREATE TABLE…)"),h("option",{value:"json"},"JSON spec"),h("option",{value:"mongo"},"MongoDB (sample docs)")),
         fmt==="ddl"&&h("select",{className:"input",style:{width:130},value:dialect,onChange:function(ev){setDl(ev.target.value)}},h("option",{value:""},"auto dialect"),["postgres","mysql","oracle","tsql","sqlite","snowflake","bigquery"].map(function(d){return h("option",{key:d,value:d},d)}))),
       h("textarea",{className:"input",style:{width:"100%",height:140,fontFamily:"monospace",fontSize:12},value:txt,onChange:function(ev){setTx(ev.target.value)}}),
       h("div",{className:"input-row",style:{marginTop:8}},h("button",{className:"primary",onClick:analyze},"Diagnose Schema"),h("button",{className:"sm",onClick:computeStrain,title:"Weights the schema by real row counts and reports where the data strains it."},h(Icon,{name:"training"})," Data strain"),h("button",{className:"sm",onClick:computeLint,title:"Labels each relation, flags anomalies, and lists conflicting tables."},h(Icon,{name:"schema"})," Lint relations"),h("button",{className:"sm adv",onClick:computeFaces,title:"Rebuild under each face-selection rule and compare the geometry."},h(Icon,{name:"native"})," Face selection"),h("input",{className:"input",style:{width:180},value:storeId,onChange:function(ev){setSt(ev.target.value)},placeholder:"store in RCDB as… (optional)"}))),
@@ -1632,7 +1633,7 @@ function Schema(){
       lint.conflict_tables&&lint.conflict_tables.length&&h("p",{style:{marginTop:8,fontSize:13}},"Tables pulled in conflicting directions: "+lint.conflict_tables.slice(0,4).map(function(t){return t.table+" ("+fmt(t.frustration,2)+")"}).join(", "))),
     strain&&h(Card,{title:"Data-forced strain",actions:h("button",{className:"sm",onClick:function(){setSr(null)}},"Close")},
       !strain.has_geometry?h("div",null,h("p",{className:"muted"},"No co-participation cycles, so no geometric strain (curvature). But the fan-out load below shows where the data pressures the design."),strain.relation_load&&strain.relation_load.length&&h("div",null,h("div",{className:"stat-label",style:{marginBottom:4}},"Data pressure"),strain.relation_load.slice(0,6).map(function(x,i){var mx=strain.relation_load[0].load||1;return h("div",{key:i,className:"status-row"},h("span",{className:"name"},x.relation),h("div",{style:{flex:1,margin:"0 8px",height:8,background:"var(--line)",borderRadius:3,overflow:"hidden"}},h("div",{style:{width:(100*Math.min(x.load/mx,1))+"%",height:"100%",background:x.load/mx>0.66?"var(--fail)":x.load/mx>0.33?"var(--gold)":"var(--accent)"}})),h("span",{className:"detail"},fmt(x.load,1)+"\u00d7"))}))):
-      strain.total_strain===0?h("p",{className:"muted"},"No strain: with uniform data magnitudes the design and the data agree (flat). Provide a live connection to weight by real cardinality."):
+      strain.total_strain===0?h("p",{className:"muted"},"No strain: with uniform data magnitudes the design and the data agree (flat). Supply declared relation weights to compare data magnitudes."):
       h("div",null,
         strain.lagrangian_curvature&&strain.lagrangian_curvature.curvature!=null&&h("div",{style:{marginBottom:8,padding:"8px 10px",background:"var(--surface2)",borderRadius:3}},h("span",{style:{fontSize:13}},"Overall imbalance (Lagrangian curvature): "),h("strong",{style:{color:strain.lagrangian_curvature.curvature>3?"var(--fail)":strain.lagrangian_curvature.curvature>1?"var(--gold)":"var(--good)"}},fmt(strain.lagrangian_curvature.curvature,2)),h("span",{className:"muted",style:{fontSize:11}},": how far the data pushes the schema from topology/geometry balance")),
         h("div",{style:{marginBottom:8}},"Total data-forced strain: ",h("strong",null,fmt(strain.total_strain,1)),strain.effective_root_causes!=null&&h("span",null," · really ",h("strong",null,strain.effective_root_causes),strain.effective_root_causes<1.6?" root cause":" root causes",strain.coupled_relations&&strain.coupled_relations.length?" (some relations are coupled, so fixing one helps the other)":"")),
@@ -1664,42 +1665,55 @@ function Schema(){
 function fmt2(v){return v==null?"-":(typeof v==="number"?v.toFixed(3):v)}
 
 function DBManager(){
-  var e=useState(""),err=e[0],setE=e[1];
-  var cs=useState([]),conns=cs[0],setCs=cs[1];
-  var nm=useState(""),cName=nm[0],setNm=nm[1],ur=useState(""),cUri=ur[0],setUr=ur[1],kd=useState("sql"),cKind=kd[0],setKd=kd[1];
-  var tb=useState(null),tables=tb[0],setTb=tb[1],ts=useState(null),testR=ts[0],setTs=ts[1];
-  var im=useState(null),imp=im[0],setIm=im[1],sel=useState(""),active=sel[0],setSel=sel[1];
-  function load(){api("/v1/dbmanager/connections").then(function(r){setCs(r.connections||[])}).catch(function(x){setE(x.message)})}
+  var er=useState(""),err=er[0],setE=er[1],rs=useState([]),rows=rs[0],setRows=rs[1];
+  var qr=useState("FROM $db RETURN RCDB_SELECT()"),query=qr[0],setQuery=qr[1],ou=useState(null),out=ou[0],setOut=ou[1];
+  var ri=useState(""),recordId=ri[0],setId=ri[1],vr=useState(0),version=vr[0],setVersion=vr[1];
+  var fm=useState("rcbf"),format=fm[0],setFormat=fm[1],up=useState(false),busy=up[0],setBusy=up[1];
+  var su=useState(""),sqlUri=su[0],setSqlUri=su[1],sn=useState(""),sqlName=sn[0],setSqlName=sn[1];
+  var sh=useState(null),sqlFile=sh[0],setSqlFile=sh[1],sc=useState([]),sqlCatalog=sc[0],setSqlCatalog=sc[1];
+  var si=useState("sql-import"),sqlId=si[0],setSqlId=si[1],ss=useState(""),sqlSchema=ss[0],setSqlSchema=ss[1];
+  var sf=useState("rcbd"),sqlFormat=sf[0],setSqlFormat=sf[1],sr=useState(null),sqlResult=sr[0],setSqlResult=sr[1];
+  function sqlArgs(){var b={};if(sqlFile)b.files=[sqlFile];else if(sqlUri.trim())b.uri=sqlUri.trim();else b.connection=sqlName.trim();if(sqlSchema.trim())b.schema=sqlSchema.trim();return b}
+  function inspectSQL(){setBusy(true);setE("");jpost("/v1/dbmanager/sql/catalog",sqlArgs()).then(function(r){setSqlCatalog(r.result.tables||[])}).catch(function(e){setE(e.message)}).finally(function(){setBusy(false)})}
+  function importSQL(){setBusy(true);setE("");setSqlResult(null);jpost("/v1/dbmanager/sql/import",Object.assign(sqlArgs(),{record_id:sqlId.trim(),expected_version:Number(version)})).then(function(r){setSqlResult(r.result);setOut(r);load()}).catch(function(e){setE(e.message)}).finally(function(){setBusy(false)})}
+  function uploadSQL(file){if(!file)return;setBusy(true);api("/rex/v1/upload",{method:"POST",headers:{"X-Filename":file.name},body:file}).then(function(r){setSqlFile(r.handle);setSqlName("");setSqlUri("")}).catch(function(e){setE(e.message)}).finally(function(){setBusy(false)})}
+  function saveSQL(){jpost("/v1/dbmanager/connections",{name:sqlName.trim(),uri:sqlUri.trim()}).then(function(){setSqlUri("")}).catch(function(e){setE(e.message)})}
+  function load(){api("/v1/dbmanager/records").then(function(r){setRows((r.result||r).records||[])}).catch(function(e){setE(e.message)})}
+  function run(){setE("");jpost("/v1/dbmanager/query",{query:query}).then(setOut).catch(function(e){setE(e.message)})}
+  function inspect(r){setE("");jpost("/v1/dbmanager/inspect",{record_id:r.id,version:r.version,history:true}).then(setOut).catch(function(e){setE(e.message)})}
+  function upload(file){if(!file||!recordId.trim())return;setBusy(true);setE("");
+    api("/rex/v1/upload",{method:"POST",headers:{"X-Filename":file.name},body:file}).then(function(r){
+      return jpost("/v1/dbmanager/import",{record_id:recordId.trim(),expected_version:Number(version),files:[r.handle],format:format})
+    }).then(function(r){setOut(r);load()}).catch(function(e){setE(e.message)}).finally(function(){setBusy(false)})}
   useEffect(load,[]);
-  function save(){if(!cName.trim()||!cUri.trim())return;jpost("/v1/dbmanager/connections",{name:cName,uri:cUri,kind:cKind}).then(function(){setNm("");setUr("");load()}).catch(function(x){setE(x.message)})}
-  function del(n){api("/v1/dbmanager/connections/"+n,{method:"DELETE"}).then(load).catch(function(x){setE(x.message)})}
-  function test(n){setTs(null);setE("");jpost("/v1/dbmanager/test",{name:n}).then(function(r){setTs(Object.assign({name:n},r))}).catch(function(x){setE(x.message)})}
-  function browse(n){setSel(n);setTb(null);setIm(null);setE("");jpost("/v1/dbmanager/tables",{name:n}).then(function(r){setTb(r.tables||[])}).catch(function(x){setE(x.message)})}
-  function importSchema(n){setIm(null);setE("");jpost("/v1/dbmanager/import",{name:n,tags:["prod"]}).then(setIm).catch(function(x){setE(x.message)})}
-  var so=useState(null),cstrain=so[0],setSo=so[1];
-  function measureStrain(n){setSo(null);setE("");jpost("/v1/dbmanager/strain",{name:n}).then(function(r){setSo(Object.assign({name:n},r))}).catch(function(x){setE(x.message)})}
-  return h(TplReport,{title:h("span",null,"Database Manager",h(Help,null,"Credentials are stored server-side and masked in responses."))},h(Err,{msg:err}),
-    h(Card,{title:"Add connection"},
-      h("div",{className:"input-row",style:{flexWrap:"wrap",gap:6}},
-        h("input",{className:"input",style:{width:130},value:cName,onChange:function(ev){setNm(ev.target.value)},placeholder:"name (prod)"}),
-        h("input",{className:"input",style:{flex:1,minWidth:240},value:cUri,onChange:function(ev){setUr(ev.target.value)},placeholder:"postgresql://user:pass@host/db  or  mongodb://…"}),
-        h("select",{className:"input",style:{width:100},value:cKind,onChange:function(ev){setKd(ev.target.value)}},h("option",{value:"sql"},"SQL"),h("option",{value:"mongo"},"Mongo")),
-        h("button",{className:"primary sm",onClick:save,disabled:!cName.trim()||!cUri.trim()},"Save"))),
-    h(Card,{title:"Connections ("+conns.length+")"},
-      conns.length?h(Table,{cols:[{l:"Name",k:"name"},{l:"Kind",k:"kind"},{l:"URI (masked)",r:function(x){return h("span",{className:"detail",style:{fontSize:11}},x.uri)}},{l:"",r:function(x){return h("div",{style:{display:"flex",gap:4}},h("button",{className:"sm",onClick:function(){test(x.name)}},"Test"),h("button",{className:"sm",onClick:function(){browse(x.name)}},"Browse"),h("button",{className:"sm",title:"Measure data-forced strain",onClick:function(){measureStrain(x.name)}},"⚡"),h("button",{className:"primary sm",onClick:function(){importSchema(x.name)}},"Import->RCDB"),h("button",{className:"sm danger",onClick:function(){del(x.name)}},h(Icon,{name:"close"})))}}],rows:conns}):h("p",{className:"muted"},"No saved connections")),
-    cstrain&&h(Card,{title:"Data-forced strain: "+cstrain.name,actions:h("button",{className:"sm",onClick:function(){setSo(null)}},"Close")},
-      !cstrain.has_geometry?h("div",null,h("p",{className:"muted"},"No co-participation cycles (curvature 0). Fan-out load shows the data pressure:"),cstrain.relation_load&&cstrain.relation_load.slice(0,6).map(function(x,i){var mx=cstrain.relation_load[0].load||1;return h("div",{key:i,className:"status-row"},h("span",{className:"name"},x.relation),h("div",{style:{flex:1,margin:"0 8px",height:8,background:"var(--line)",borderRadius:3,overflow:"hidden"}},h("div",{style:{width:(100*Math.min(x.load/mx,1))+"%",height:"100%",background:x.load/mx>0.66?"var(--fail)":x.load/mx>0.33?"var(--gold)":"var(--accent)"}})),h("span",{className:"detail"},fmt(x.load,1)+"\u00d7"))})):
-      h("div",null,
-        h("div",{style:{marginBottom:8}},"Total: ",h("strong",null,fmt(cstrain.total_strain,1)),cstrain.effective_root_causes!=null&&h("span",null," · ~",h("strong",null,cstrain.effective_root_causes)," root cause(s)")),
-        cstrain.per_join&&cstrain.per_join.length&&h("div",{style:{marginBottom:8}},h("div",{className:"stat-label",style:{marginBottom:4}},"Where: strained joins"),cstrain.per_join.slice(0,5).map(function(j,i){var mx=cstrain.per_join[0].strain||1;return h("div",{key:i,className:"status-row"},h("span",{className:"name"},j.tables.join(" · ")),h("div",{style:{flex:1,margin:"0 8px",height:8,background:"var(--line)",borderRadius:3,overflow:"hidden"}},h("div",{style:{width:(100*j.strain/mx)+"%",height:"100%",background:j.strain/mx>0.66?"var(--fail)":j.strain/mx>0.33?"var(--gold)":"var(--accent)"}})),h("span",{className:"detail"},fmt(j.strain,1)))})),
-        cstrain.per_relation&&cstrain.per_relation.length&&h("div",null,h("div",{className:"stat-label",style:{marginBottom:4}},"Who: fix first"),h(Table,{cols:[{l:"Relation",k:"relation"},{l:"Contribution",r:function(x){return fmt(x.contribution,2)}}],rows:cstrain.per_relation.slice(0,6)})))),
-    testR&&h("div",{style:{marginBottom:10}},h(Badge,{type:testR.ok?"good":"fail"},testR.ok?"Connection OK. "+testR.name:"Failed: "+(testR.error||""))),
-    tables&&h(Card,{title:"Tables in "+active+" ("+tables.length+")",actions:h("div",{style:{display:"flex",gap:4}},h("button",{className:"sm",title:"Measure data-forced strain",onClick:function(){measureStrain(active)}},"⚡ Strain"),h("button",{className:"primary sm",onClick:function(){importSchema(active)}},"Import->RCDB"))},
-      h(Table,{cols:[{l:"Table",k:"table"},{l:"Rows",r:function(x){return x.rows!=null?fmt(x.rows,0):"-"}},{l:"Columns",k:"columns"},{l:"FKs",k:"foreign_keys"},{l:"PK",r:function(x){return (x.primary_key||[]).join(", ")||"-"}}],rows:tables})),
-    imp&&h(Card,{title:"Imported & diagnosed",actions:h(XBar,{data:imp,name:"import-diag"})},
-      h("div",{style:{marginBottom:6}},h(Badge,{type:imp.verdict==="acyclic"?"good":imp.verdict==="cycles_present"?"fail":"gold"},imp.verdict)," stored as ",h("strong",null,imp.stored_as)),
-      imp.relations_to_cut&&h("p",{style:{fontSize:13,color:"var(--fail)"}},"Cut to fix: "+imp.relations_to_cut.join(", ")),
-      h("p",{className:"muted",style:{fontSize:12}},"Stored. See RCDB Overview.")))}
+  return h(TplReport,{title:"RCDB records"},h(Err,{msg:err}),
+    h(Card,{title:"RCQL",actions:h("button",{className:"primary sm",onClick:run},"Run")},
+      h("textarea",{className:"input",style:{width:"100%",minHeight:90},value:query,onChange:function(e){setQuery(e.target.value)},"aria-label":"RCQL query"})),
+    h(Card,{title:"SQL and warehouse sources"},
+      h("p",{className:"muted"},"Import into RCDB to query and run programs locally. SQL remains available as an optional source."),
+      h("div",{className:"input-row",style:{gap:8,flexWrap:"wrap"}},
+        h("input",{className:"input",type:"password",value:sqlUri,onChange:function(e){setSqlUri(e.target.value);setSqlFile(null)},placeholder:"SQL or warehouse connection URI","aria-label":"SQL source URI"}),
+        h("input",{className:"input",value:sqlName,onChange:function(e){setSqlName(e.target.value);setSqlFile(null)},placeholder:"Saved connection name","aria-label":"SQL connection name"}),
+        h("button",{className:"sm",disabled:!sqlName.trim()||!sqlUri.trim(),onClick:saveSQL},"Save source"),
+        h("input",{className:"input",value:sqlSchema,onChange:function(e){setSqlSchema(e.target.value)},placeholder:"Schema (default)","aria-label":"SQL schema"})),
+      h("div",{className:"input-row",style:{gap:8,marginTop:8}},h("label",null,"SQLite file ",h("input",{type:"file",disabled:busy,"aria-label":"SQLite source file",onChange:function(e){uploadSQL(e.target.files[0])}})),
+        sqlFile&&h(Badge,null,"Uploaded"),h("button",{className:"sm",disabled:busy,onClick:inspectSQL},"Inspect SQL source")),
+      sqlCatalog.length>0&&h(Table,{cols:[{l:"Table",k:"table"},{l:"Columns",r:function(t){return t.columns.length}},{l:"Primary key",r:function(t){return((t.primary_key||{}).constrained_columns||[]).join(", ")}}],rows:sqlCatalog}),
+      h("div",{className:"input-row",style:{gap:8,marginTop:8}},
+        h("input",{className:"input",value:sqlId,onChange:function(e){setSqlId(e.target.value)},"aria-label":"SQL import record"}),
+        h("input",{className:"input",type:"number",min:0,value:version,onChange:function(e){setVersion(e.target.value)},"aria-label":"SQL expected version",style:{width:90}}),
+        h("select",{className:"input",value:sqlFormat,onChange:function(e){setSqlFormat(e.target.value)},"aria-label":"SQL export format"},["rcbf","rcbd","safetensors","hdf5"].map(function(f){return h("option",{key:f,value:f},f)})),
+        h("button",{className:"primary sm",disabled:busy||!sqlId.trim(),onClick:importSQL},busy?"Importing…":"Import all tables into RCDB")),
+      sqlResult&&h("p",null,"Verified "+sqlResult.rows+" rows in "+sqlResult.tables+" tables. ",
+        h("button",{className:"sm",onClick:function(){authDownload("/v1/dbmanager/sql/export?record_id="+encodeURIComponent(sqlResult.record.id)+"&version="+sqlResult.record.version+"&format="+sqlFormat,"rcdb-import.zip").catch(function(e){setE(e.message)})}},"Download native files"))),
+    h(Card,{title:"Import custom file"},h("div",{className:"input-row",style:{gap:8,flexWrap:"wrap"}},
+      h("input",{className:"input",value:recordId,onChange:function(e){setId(e.target.value)},placeholder:"Record identity"}),
+      h("input",{className:"input",type:"number",min:0,value:version,onChange:function(e){setVersion(e.target.value)},"aria-label":"Expected version",style:{width:90}}),
+      h("select",{className:"input",value:format,onChange:function(e){setFormat(e.target.value)}},["rcbf","rcbd","safetensors","hdf5"].map(function(f){return h("option",{key:f,value:f},f)})),
+      h("input",{type:"file",disabled:busy||!recordId.trim(),onChange:function(e){upload(e.target.files[0])}}))),
+    h(Card,{title:"Records ("+rows.length+")",actions:h("button",{className:"sm",onClick:load},"Refresh")},
+      h(Table,{cols:[{l:"Identity",k:"id"},{l:"Version",k:"version"},{l:"Type",r:function(r){return(r.signature||{}).object_type||""}},{l:"",r:function(r){return h("button",{className:"sm",onClick:function(){inspect(r)}},"Inspect")}}],rows:rows})),
+    out&&h(Card,{title:"Result",actions:h(XBar,{data:out,name:"rcql-result"})},h("pre",{style:{overflow:"auto",maxHeight:450}},JSON.stringify(out.preview||out,null,2))))}
 
 function SchemaBuilder(){
   var e=useState(""),err=e[0],setE=e[1];
@@ -2000,22 +2014,21 @@ function Releases(){
 function Connectors(){
   var e=useState(""),err=e[0],setE=e[1];
   var c=useState(null),cat=c[0],setCat=c[1];
-  var cn=useState([]),conns=cn[0],setConns=cn[1];
-  var u=useState(""),uri=u[0],setUri=u[1];
-  var nm=useState(""),cname=nm[0],setCname=nm[1];
+  var u=useState("rcdb"),uri=u[0],setUri=u[1];
+  var sr=useState('{"record_id":"source","version":1}'),sourceText=sr[0],setSource=sr[1];
   var w=useState(false),weights=w[0],setW=w[1];
   var id=useState(""),recId=id[0],setRecId=id[1];
   var rd=useState(null),readR=rd[0],setRd=rd[1];
   var vl=useState(null),valR=vl[0],setVl=vl[1];
   var ig=useState(null),ingR=ig[0],setIg=ig[1];
   function loadCat(){api("/v1/connectors").then(function(r){setCat(r.connectors||[])}).catch(function(x){setE(x.message)})}
-  function loadConns(){api("/v1/dbmanager/connections").then(function(r){setConns(r.connections||[])}).catch(function(){})}
-  useEffect(function(){loadCat();loadConns()},[]);
-  function reqBody(extra){var b={weights:weights};if(cname)b.name=cname;else if(uri.trim())b.uri=uri.trim();if(extra)Object.assign(b,extra);return b}
-  function haveSource(){return !!(cname||uri.trim())}
-  function doRead(){setE("");setRd(null);setVl(null);setIg(null);if(!haveSource()){setE("Pick a saved connection or enter a URI");return}jpost("/v1/connectors/read",reqBody()).then(setRd).catch(function(x){setE(x.message)})}
-  function doValidate(){setE("");setVl(null);setRd(null);setIg(null);if(!haveSource()){setE("Pick a saved connection or enter a URI");return}jpost("/v1/connectors/validate",reqBody()).then(setVl).catch(function(x){setE(x.message)})}
-  function doIngest(){setE("");setIg(null);if(!haveSource()){setE("Pick a saved connection or enter a URI");return}if(!recId.trim()){setE("Provide an id to store as");return}jpost("/v1/connectors/ingest",reqBody({id:recId.trim(),tags:["connector"]})).then(setIg).catch(function(x){setE(x.message)})}
+  useEffect(function(){loadCat()},[]);
+  function reqBody(extra){var b={uri:uri.trim()};if(sourceText.trim())b.source=JSON.parse(sourceText);if(extra)Object.assign(b,extra);return b}
+  function haveSource(){try{return !!uri.trim()&&(!sourceText.trim()||JSON.parse(sourceText)!==undefined)}catch(e){setE("Source must be JSON");return false}}
+  function uploadNative(file){if(!file)return;api("/rex/v1/upload",{method:"POST",headers:{"X-Filename":file.name},body:file}).then(function(r){setSource(JSON.stringify(r.handle))}).catch(function(e){setE(e.message)})}
+  function doRead(){setE("");setRd(null);setVl(null);setIg(null);if(!haveSource()){setE("Select a format or connector and its source");return}jpost("/v1/connectors/read",reqBody()).then(setRd).catch(function(x){setE(x.message)})}
+  function doValidate(){setE("");setVl(null);setRd(null);setIg(null);if(!haveSource()){setE("Select a format or connector and its source");return}jpost("/v1/connectors/validate",reqBody()).then(setVl).catch(function(x){setE(x.message)})}
+  function doIngest(){setE("");setIg(null);if(!haveSource()){setE("Select a format or connector and its source");return}if(!recId.trim()){setE("Provide an id to store as");return}jpost("/v1/connectors/ingest",reqBody({id:recId.trim(),tags:["connector"]})).then(setIg).catch(function(x){setE(x.message)})}
   return h(TplReport,{title:"Connectors"},h(Err,{msg:err}),
     h("p",{className:"muted",style:{marginBottom:10,fontSize:12.5}},"Validate a source before importing it."),
     cat&&h(Card,{title:"Available connectors ("+cat.length+")"},
@@ -2027,10 +2040,9 @@ function Connectors(){
     cat&&(function(){var hints=[];cat.forEach(function(co){co.schemes.forEach(function(s){if(!s.driver_available&&s.driver_hint)hints.push(s.scheme+" - "+s.driver_hint)})});return hints.length?h(Card,{title:"Not installed"},hints.map(function(hn,i){return h("div",{key:i,className:"status-row"},h("span",{className:"detail",style:{fontSize:12,fontFamily:"monospace"}},hn))})):null})(),
     h(Card,{title:"Onboard a source"},
       h("div",{className:"input-row",style:{flexWrap:"wrap",gap:6}},
-        h("select",{className:"input",style:{width:180},value:cname,onChange:function(ev){setCname(ev.target.value)}},h("option",{value:""},"saved connection…"),conns.map(function(cc){return h("option",{key:cc.name,value:cc.name},cc.name+" ("+cc.kind+")")})),
-        h("span",{className:"muted",style:{alignSelf:"center"}},"or"),
-        h("input",{className:"input",style:{flex:1,minWidth:220},value:uri,onChange:function(ev){setUri(ev.target.value);if(ev.target.value)setCname("")},placeholder:"snowflake://user:pass@acct/db   ·   ontology   ·   edges"}),
-        h("label",{className:"muted",style:{display:"flex",alignItems:"center",gap:4}},h("input",{type:"checkbox",checked:weights,onChange:function(ev){setW(ev.target.checked)}}),"weights")),
+        h("select",{className:"input",style:{width:180},value:uri,onChange:function(ev){setUri(ev.target.value);setSource("")}},(cat||[]).reduce(function(all,co){return all.concat(co.schemes)},[]).map(function(entry){return h("option",{key:entry.scheme,value:entry.scheme},entry.scheme)})),
+        (uri==="rcbd"||uri==="rcbf")&&h("input",{type:"file",onChange:function(ev){uploadNative(ev.target.files[0])}})),
+      h("textarea",{className:"input",style:{width:"100%",minHeight:80,marginTop:8},value:sourceText,onChange:function(ev){setSource(ev.target.value)},"aria-label":"Source selection JSON",placeholder:'{"record_id":"source","version":1}'}),
       h("div",{className:"input-row",style:{marginTop:8,gap:6}},
         h("button",{className:"sm",onClick:doValidate},"◇ Validate"),
         h("button",{className:"primary sm",onClick:doRead},"Read"),
@@ -2722,7 +2734,7 @@ function GraphView(){
 
 var SECTIONS=[
   {label:"ANALYZE",tabs:[{id:"pipeline",label:"Pipeline",icon:"pipeline"},{id:"graph",label:"Graph",icon:"pipeline"},{id:"documents",label:"Documents",icon:"documents"},{id:"corpus",label:"Corpus",icon:"corpus"}]},
-  {label:"DATABASE",tabs:[{id:"database",label:"RCDB Overview",icon:"rcdb"},{id:"dbmanager",label:"DB Manager",icon:"dbmanager"},{id:"connectors",label:"Connectors",icon:"connectors"},{id:"schema",label:"Schema Diagnosis",icon:"schema"},{id:"schemabuilder",label:"Schema Builder",icon:"builder"},{id:"ontology",label:"Ontology",icon:"ontology"},{id:"releases",label:"Release Series",icon:"ontology"},{id:"cellquery",label:"Cell Query",icon:"rcdb"}]},
+  {label:"DATABASE",tabs:[{id:"database",label:"RCDB Overview",icon:"rcdb"},{id:"dbmanager",label:"RCQL Records",icon:"dbmanager"},{id:"connectors",label:"Connectors",icon:"connectors"},{id:"schema",label:"Schema Diagnosis",icon:"schema"},{id:"schemabuilder",label:"Schema Builder",icon:"builder"},{id:"ontology",label:"Ontology",icon:"ontology"},{id:"releases",label:"Release Series",icon:"ontology"},{id:"cellquery",label:"Cell Query",icon:"rcdb"}]},
   {label:"CONNECT",tabs:[{id:"trustgraph",label:"TrustGraph",icon:"trustgraph"},{id:"models",label:"Models",icon:"models"}]},
   {label:"BUILD",tabs:[{id:"builder",label:"Agent Builder",icon:"agent"},{id:"training",label:"Training",icon:"training"},{id:"chat",label:"Chat",icon:"chat"},{id:"setups",label:"Setups",icon:"setups"},{id:"mlstudio",label:"Model Studio",icon:"studio"},{id:"operations",label:"Operations",icon:"operations"},{id:"swarm",label:"Hive",icon:"hive"}]},
   {label:"ADMIN",tabs:[{id:"system",label:"System",icon:"system"}]}];

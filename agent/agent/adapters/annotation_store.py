@@ -39,6 +39,8 @@ def ingest_annotations(store, source, *, document_id, record_id=None, reader=Non
     from agent.adapters.formats import read, reader_fn
     from agent.auto import build_rex_from_edges
     from rcdb.core import VersionConflictError
+    from agent.record_access import require_store
+    store = require_store(store)
 
     if not isinstance(document_id, str) or not document_id.strip():
         raise ValueError("document_id must be a nonempty string")

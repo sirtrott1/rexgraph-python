@@ -876,14 +876,30 @@ existing save/load pairs remain valid. Existing `.rex` directories with legacy
 
 ## `rcbf`: Relational complex binary file (.rcbf)
 
-`load_rcbf(path)` imports an RCBF stream into a RexGraph, then it can be
+`save_rcbf(path, obj, max_bytes=1073741824)` writes complete static or temporal
+canonical state as an RCBF version 6 stream. The common state serializer retains
+exact coefficients, source identities, metadata, fields and temporal cutoffs.
+Optional derived caches are not calculated. Publication is staged and atomic.
+
+The wire starts with the eight-byte RCBF magic followed by little-endian
+`uint32 version=6`, `uint32 flags=0`, `uint64 header_bytes` and `uint64 tensor_count`.
+The header is a closed native value containing the canonical state header. Each
+tensor follows in sorted name order as `uint64 name_bytes`, `uint64 value_bytes`,
+UTF-8 name and a closed native array value. SHA-256 of all preceding stream bytes
+terminates the file. Names are distinct; header, tensor count and total byte
+limits are checked before allocation. The canonical state seal is checked after
+stream integrity. Older readers that accept only versions 4 and 5 reject version 6.
+
+`load_rcbf(path, max_bytes=1073741824)` reads version 6 without selecting a
+snapshot or dropping temporal history. Its legacy version 4/5 importer can be
+used to load an older stream into a RexGraph, then it can be
 stored in RCDB or queried through RCQL like any other RexGraph source. The bridge
 preserves C0 labels, primary C1 boundary spans (including branching relations),
 C1 weights and signs, and C2 boundaries only when their coefficients and chain
 condition are exact. It never applies a clique or star expansion.
 
 RCBF stores a sequential stream, while RCBD stores an addressable directory.
-The RCBF importer reconstructs the current grade 0 through grade 2 state and
+The legacy version 4/5 importer reconstructs the current grade 0 through grade 2 state and
 excludes derived numeric products and temporal tails. A stream containing
 temporal states requires `allow_current_snapshot=True` to select that current
 state. Unsupported mixed relation directions and inexact grade 2 coefficients

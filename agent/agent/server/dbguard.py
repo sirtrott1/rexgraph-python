@@ -1,21 +1,8 @@
-"""
-agent.server.dbguard: opt in allow list for database connection URIs.
+"""HTTP source admission and deployment-specific outbound URL policies.
 
-The dbmanager/connectors HTTP routes accept a connection URI and hand it to
-SQLAlchemy ``create_engine`` / schema reflection. On a network exposed server that
-is an SSRF + local file read surface (``sqlite:////etc/passwd``,
-``postgresql://internal-host/…``). This module gates it.
-
-**Off by default** (nothing set -> every URI is allowed, preserving local/dev use).
-Turn it on per deployment with any of:
-
-    REXGRAPH_DB_SAFE=1              # preset: block file-based DBs (sqlite/duckdb)
-                                    # and loopback/private-network hosts (anti-SSRF)
-    REXGRAPH_ALLOWED_DB_SCHEMES=postgresql,mysql,snowflake   # scheme allow-list
-    REXGRAPH_ALLOWED_DB_HOSTS=db1.corp,db2.corp              # host allow-list
-
-Enforcement runs at the HTTP boundary only; the local `rexgraph-connect` CLI (an
-operator on the box) is intentionally unrestricted.
+SQL sources are explicit optional operations. Files enter through workspace handles;
+optional host and scheme restrictions continue to apply to other connectors.
+HTTP fetch clients share the host checks through check_outbound_url.
 """
 
 from __future__ import annotations
@@ -29,7 +16,7 @@ from fastapi import HTTPException
 
 # Schemes that read a LOCAL FILE rather than talk to a server, blocked by the
 # REXGRAPH_DB_SAFE preset because they can exfiltrate arbitrary files.
-_FILE_SCHEMES = {"sqlite", "duckdb", "access", "csv"}
+_FILE_SCHEMES = {"local", "file", "rex", "rcbd", "rcbf", "csv"}
 
 
 def _csv_env(name: str):
@@ -121,12 +108,16 @@ def check_outbound_url(url: str) -> None:
                  f"(REXGRAPH_ALLOWED_FETCH_HOSTS)")
 
 
-def check_db_uri(uri: str) -> None:
+def check_db_uri(uri: str, *, allow_sql: bool = False) -> None:
     """Raise HTTPException(400) if ``uri`` violates the configured DB policy.
 
-    A no op when no policy env var is set, and for non URI values (bare in memory
-    scheme names like ``edgelist`` that carry no ``://``).
+    SQL requires allow_sql=True at an explicit source operation. Deployment
+    host/scheme policies still apply before driver access.
     """
+    from agent.record_access import SQL_SCHEMES
+    scheme = str(uri or "").split("://", 1)[0].split("+", 1)[0].lower()
+    if scheme in SQL_SCHEMES and not allow_sql:
+        raise HTTPException(400, "SQL access requires an explicit SQL source operation; Agent record storage uses RCDB")
     if not uri or "://" not in uri or not _policy_active():
         return
 
@@ -145,9 +136,7 @@ def check_db_uri(uri: str) -> None:
                  f"(REXGRAPH_ALLOWED_DB_SCHEMES)")
 
     if safe and base_scheme in _FILE_SCHEMES:
-        raise HTTPException(
-            400, f"file-based database scheme '{base_scheme}' is blocked "
-                 f"(REXGRAPH_DB_SAFE); connect to a database server instead")
+        raise HTTPException(400, f"local source scheme '{base_scheme}' requires a file handle")
 
     if safe and _host_is_local_or_private(host):
         raise HTTPException(
